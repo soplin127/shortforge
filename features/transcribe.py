@@ -11,7 +11,7 @@ from pathlib import Path
 from core.ffmpeg import FeatureUnavailable
 from features.subtitles import Cue, Word
 
-APP_NAME = "shorts-uniq"
+APP_NAME = "shortforge"
 CACHE_VERSION = 1
 _lock = threading.Lock()  # one transcription at a time; variants then hit the cache
 _models: dict[str, object] = {}

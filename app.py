@@ -14,7 +14,7 @@ def main() -> int:
     from gui.theme import install_theme
 
     app = QApplication(sys.argv)
-    app.setApplicationName("Shorts Uniq")
+    app.setApplicationName("ShortForge")
     install_theme(app)
     window = MainWindow()
     window.show()

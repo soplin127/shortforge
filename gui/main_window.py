@@ -35,9 +35,11 @@ from gui.files_tab import FilesTab
 from gui.forms import SectionForm, metadata_groups, music_groups, subtitle_groups, uniq_groups
 from gui.queue_tab import STATUS_LABELS, JobRequest, QueueTab
 
-APP_TITLE = "Shorts Uniq"
+APP_TITLE = "ShortForge"
 PRESET_FILTER = "Пресеты (*.json);;Все файлы (*)"
 APP_TAGLINE = "уникализация Shorts и TikTok"
+# Pre-rename identifier, kept so saved settings survive the rename to ShortForge.
+SETTINGS_ID = "shorts-uniq"
 KEY_PRESET, KEY_FILES, KEY_GEOMETRY, KEY_PAGE = "preset_json", "files", "geometry", "page"
 DEFAULT_SIZE = (1180, 820)
 MIN_SIZE = (900, 600)
@@ -61,7 +63,7 @@ class MainWindow(QMainWindow):
     def __init__(self, settings: QSettings | None = None, check_tools: bool = True,
                  parent: QWidget | None = None):
         super().__init__(parent)
-        self.settings = settings or QSettings("shorts-uniq", "shorts-uniq")
+        self.settings = settings or QSettings(SETTINGS_ID, SETTINGS_ID)
         self.setWindowTitle(APP_TITLE)
         self.resize(*DEFAULT_SIZE)
         self.setMinimumSize(*MIN_SIZE)
