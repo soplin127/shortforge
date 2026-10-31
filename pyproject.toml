@@ -2,6 +2,8 @@
 name = "shortforge"
 version = "0.1.0"
 description = "Batch generator of unique variants of short vertical videos for TikTok, YouTube Shorts and Reels"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = ["psutil>=5.9"]
 
