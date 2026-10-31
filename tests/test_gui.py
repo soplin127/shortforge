@@ -8,8 +8,9 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import QEventLoop, QSettings, QTimer  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtCore import QCoreApplication, QEvent, QEventLoop, QSettings, Qt, QTimer  # noqa: E402
+from PySide6.QtGui import QColor  # noqa: E402
+from PySide6.QtWidgets import QApplication, QTableWidgetItem  # noqa: E402
 
 from core.config import (  # noqa: E402
     AdSettings,
@@ -25,7 +26,7 @@ from core.config import (  # noqa: E402
     SubtitleSettings,
     UniqSettings,
 )
-from core.ffmpeg import FFmpegNotFound, locate_tools  # noqa: E402
+from core.ffmpeg import FFmpegNotFound, FFmpegTools, locate_tools  # noqa: E402
 from gui.ads_tab import AdsTab  # noqa: E402
 from gui.fields import ListField, RangeField, RangeSlider  # noqa: E402
 from gui.files_tab import FilesTab  # noqa: E402
@@ -38,8 +39,15 @@ from gui.forms import (  # noqa: E402
     subtitle_groups,
     uniq_groups,
 )
-from gui.main_window import MainWindow  # noqa: E402
-from gui.queue_tab import QueueTab  # noqa: E402
+from gui.main_window import NAV_ITEM_HEIGHT, MainWindow  # noqa: E402
+from gui.queue_tab import (  # noqa: E402
+    COL_PROGRESS,
+    COL_STATUS,
+    STATUS_COLORS,
+    QueueTab,
+    make_progress_cell,
+)
+from gui.theme import ACCENT, apply_theme, build_stylesheet, is_dark  # noqa: E402
 
 ALL_GROUPS = (uniq_groups, metadata_groups, music_groups, subtitle_groups, output_groups,
               batch_groups)
@@ -48,6 +56,12 @@ ALL_GROUPS = (uniq_groups, metadata_groups, music_groups, subtitle_groups, outpu
 @pytest.fixture(scope="module")
 def qapp():
     return QApplication.instance() or QApplication([])
+
+
+def _dispose(widget):
+    """Let Qt delete a parentless widget now instead of Python's GC at an arbitrary time."""
+    widget.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
 def _round_trip(preset):
@@ -209,6 +223,102 @@ def test_main_window_collects_preset_and_restores_it(qapp, tmp_path):
     restored.close()
 
 
+def test_theme_applies_fusion_style_and_stylesheet(qapp):
+    dark = apply_theme(qapp)
+    sheet = qapp.styleSheet()
+
+    assert ACCENT.lower() in sheet.lower()
+    assert is_dark(qapp.palette()) == dark
+    qapp.setStyleSheet("")  # a stylesheet wraps the style; look at the base style itself
+    assert qapp.style().name().lower() == "fusion"
+    qapp.setStyleSheet(sheet)
+
+
+def test_stylesheets_differ_between_light_and_dark():
+    assert build_stylesheet(dark=True) != build_stylesheet(dark=False)
+
+
+def test_toggle_disables_dependent_fields(qapp):
+    form = SectionForm(uniq_groups())
+    form.load(Preset())
+    toggle = form.field("uniq", "color_enabled")
+    brightness = form.field("uniq", "brightness").widget
+
+    toggle.set(False)
+    assert not brightness.isEnabled()
+    toggle.set(True)
+    assert brightness.isEnabled()
+
+
+def test_loading_preset_syncs_dependent_fields(qapp):
+    form = SectionForm(music_groups())
+
+    form.load(replace(Preset(), music=MusicSettings(enabled=False)))
+
+    assert not form.field("music", "path").widget.isEnabled()
+    assert form.field("music", "enabled").widget.isEnabled()
+
+
+def test_main_window_sidebar_switches_pages(qapp, tmp_path):
+    window = MainWindow(settings=_settings(tmp_path), check_tools=False)
+
+    assert window.nav.count() == 7
+    assert window.nav.item(0).text() == "Файлы"
+    window.nav.setCurrentRow(6)
+    assert window.pages.currentWidget() is window.queue
+    window.close()
+
+
+def test_main_window_status_bar_reports_missing_ffmpeg(qapp, tmp_path, monkeypatch):
+    errors = []
+    window = MainWindow(settings=_settings(tmp_path), check_tools=False)
+    monkeypatch.setattr(window, "show_error", errors.append)
+
+    def missing(_custom=""):
+        raise FFmpegNotFound("install it")
+
+    monkeypatch.setattr("gui.main_window.locate_tools", missing)
+    window._check_tools()
+
+    assert "ffmpeg не найден" in window.tools_label.text()
+    assert errors == ["install it"]
+    window.close()
+
+
+def test_main_window_status_bar_shows_ffmpeg_path(qapp, tmp_path, monkeypatch):
+    window = MainWindow(settings=_settings(tmp_path), check_tools=False)
+    monkeypatch.setattr("gui.main_window.locate_tools",
+                        lambda _custom="": FFmpegTools("/opt/bin/ffmpeg", "/opt/bin/ffprobe"))
+    window._check_tools()
+
+    assert "/opt/bin/ffmpeg" in window.tools_label.text()
+    window.close()
+
+
+def test_queue_tab_colors_status_cells(qapp):
+    tab = QueueTab(lambda preview: None)
+    tab.table.setRowCount(2)
+    for row in range(2):
+        tab.table.setItem(row, COL_STATUS, QTableWidgetItem())
+        tab.table.setCellWidget(row, COL_PROGRESS, make_progress_cell())
+
+    tab._on_status(0, "done", "")
+    tab._on_status(1, "failed", "boom")
+
+    assert tab.table.item(0, COL_STATUS).foreground().color() == QColor(STATUS_COLORS["done"])
+    assert tab.table.item(1, COL_STATUS).foreground().color() == QColor(STATUS_COLORS["failed"])
+    assert tab.table.item(1, COL_STATUS).toolTip() == "boom"
+    _dispose(tab)
+
+
+def test_files_tab_shows_hint_only_when_empty(qapp, tmp_path):
+    tab = FilesTab()
+    assert tab.list.hint_visible()
+
+    tab.add_paths([str(tmp_path)])
+    assert not tab.list.hint_visible()
+
+
 def test_main_window_job_request_requires_output_folder(qapp, tmp_path, monkeypatch):
     errors = []
     window = MainWindow(settings=_settings(tmp_path), check_tools=False)
@@ -258,3 +368,26 @@ def test_queue_tab_runs_batch_and_reports_progress(qapp, tools, tmp_path):
     assert tab.status_text(0) == "Готово" and tab.status_text(1) == "Готово"
     assert tab.overall_value() == (2, 2)
     assert len(list((tmp_path / "out").glob("*.mp4"))) == 2
+    _dispose(tab)
+
+
+def test_progress_cell_centers_bar_vertically(qapp):
+    tab = QueueTab(lambda preview: None)
+    tab.table.setRowCount(1)
+    tab.table.setCellWidget(0, COL_PROGRESS, make_progress_cell())
+
+    tab._on_progress(0, 0.5)
+
+    cell = tab.table.cellWidget(0, COL_PROGRESS)
+    assert cell.layout().alignment() & Qt.AlignmentFlag.AlignVCenter
+    assert tab.row_progress(0).value() == tab.row_progress(0).maximum() // 2
+    _dispose(tab)
+
+
+def test_sidebar_items_have_comfortable_height(qapp, tmp_path):
+    window = MainWindow(settings=_settings(tmp_path), check_tools=False)
+
+    heights = {window.nav.item(row).sizeHint().height() for row in range(window.nav.count())}
+
+    assert heights == {NAV_ITEM_HEIGHT}
+    window.close()

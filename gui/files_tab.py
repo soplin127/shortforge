@@ -4,6 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QPainter, QPalette, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QFileDialog,
@@ -20,6 +21,9 @@ from core.sources import collect_sources
 from gui.forms import SectionForm, output_groups
 
 VIDEO_FILTER = "Видео (*.mp4 *.mov *.webm *.mkv);;Все файлы (*)"
+DROP_HINT = "Перетащите сюда видео или папки\nили нажмите «Добавить файлы…»"
+DROP_ZONE_MARGIN = 12
+DROP_ZONE_RADIUS = 10
 
 
 class DropList(QListWidget):
@@ -30,6 +34,24 @@ class DropList(QListWidget):
         self.on_drop = on_drop
         self.setAcceptDrops(True)
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+
+    def hint_visible(self) -> bool:
+        return self.count() == 0
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        if not self.hint_visible():
+            return
+        painter = QPainter(self.viewport())
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        muted = self.palette().color(QPalette.ColorRole.PlaceholderText)
+        pen = QPen(muted, 1.5, Qt.PenStyle.DashLine)
+        painter.setPen(pen)
+        zone = self.viewport().rect().adjusted(DROP_ZONE_MARGIN, DROP_ZONE_MARGIN,
+                                               -DROP_ZONE_MARGIN, -DROP_ZONE_MARGIN)
+        painter.drawRoundedRect(zone, DROP_ZONE_RADIUS, DROP_ZONE_RADIUS)
+        painter.drawText(zone, Qt.AlignmentFlag.AlignCenter, DROP_HINT)
+        painter.end()
 
     def dragEnterEvent(self, event) -> None:
         if event.mimeData().hasUrls():
@@ -56,6 +78,7 @@ class FilesTab(QWidget):
         self.list = DropList(self.add_paths)
         self.output = SectionForm(output_groups())
         self.count = QLabel()
+        self.count.setObjectName("hint")
 
         buttons = QHBoxLayout()
         for text, slot in (("Добавить файлы…", self._pick_files),
@@ -65,11 +88,13 @@ class FilesTab(QWidget):
             button = QPushButton(text)
             button.clicked.connect(slot)
             buttons.addWidget(button)
+            if slot == self._pick_files:
+                button.setObjectName("primary")
         buttons.addStretch(1)
         buttons.addWidget(self.count)
 
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("Перетащите сюда видео или папки:"))
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.list, 2)
         layout.addLayout(buttons)
         layout.addWidget(self.output, 1)

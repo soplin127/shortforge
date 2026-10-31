@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Callable
 
 from PySide6.QtCore import QObject, Qt, QUrl, Signal
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QBrush, QColor, QDesktopServices, QFontDatabase
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
@@ -25,6 +25,7 @@ from core.batch import BatchCallbacks, BatchRunner, JobResult, format_eta
 from core.config import Preset
 from core.ffmpeg import FFmpegTools
 from gui.forms import SectionForm, batch_groups
+from gui.theme import ACCENT, DANGER, SUCCESS, WARNING
 
 JobRequest = tuple[FFmpegTools, Preset, list[Path], Path]
 STATUS_LABELS = {
@@ -35,10 +36,34 @@ STATUS_LABELS = {
     "failed": "Ошибка",
     "stopped": "Остановлено",
 }
+STATUS_COLORS = {
+    "running": ACCENT,
+    "done": SUCCESS,
+    "skipped": "#8B8D98",
+    "failed": DANGER,
+    "stopped": WARNING,
+}
 PROGRESS_STEPS = 1000
+VARIANT_COL_WIDTH = 80
+STATUS_COL_WIDTH = 120
+PROGRESS_COL_WIDTH = 160
+PROGRESS_CELL_MARGIN = 8
 LOG_MAX_LINES = 5000
 STOP_WAIT_SECONDS = 15.0
 COL_FILE, COL_VARIANT, COL_STATUS, COL_PROGRESS = range(4)
+
+
+def make_progress_cell() -> QWidget:
+    """A table cell holding a thin progress bar centered vertically."""
+    bar = QProgressBar()
+    bar.setRange(0, PROGRESS_STEPS)
+    bar.setTextVisible(False)
+    cell = QWidget()
+    layout = QVBoxLayout(cell)
+    layout.setContentsMargins(PROGRESS_CELL_MARGIN, 0, PROGRESS_CELL_MARGIN, 0)
+    layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+    layout.addWidget(bar)
+    return cell
 
 
 class BatchSignals(QObject):
@@ -74,14 +99,16 @@ class QueueTab(QWidget):
         self.form = SectionForm(batch_groups())
         self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(["Файл", "Вариант", "Статус", "Прогресс"])
-        self.table.horizontalHeader().setSectionResizeMode(COL_FILE, QHeaderView.ResizeMode.Stretch)
-        self.table.verticalHeader().setVisible(False)
-        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._setup_table()
         self.overall = QProgressBar()
+        self.overall.setTextVisible(False)
         self.eta = QLabel("—")
+        self.eta.setObjectName("hint")
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
         self.log.setMaximumBlockCount(LOG_MAX_LINES)
+        self.log.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
+        self.log.setPlaceholderText("Здесь появится журнал обработки")
 
         self.buttons = {}
         controls = QHBoxLayout()
@@ -95,6 +122,12 @@ class QueueTab(QWidget):
             button.clicked.connect(slot)
             controls.addWidget(button)
             self.buttons[key] = button
+            if key == "preview":
+                controls.addSpacing(12)
+            if key == "stop":
+                controls.addStretch(1)
+        self.buttons["start"].setObjectName("primary")
+        self.buttons["stop"].setObjectName("danger")
 
         progress = QHBoxLayout()
         progress.addWidget(self.overall, 1)
@@ -110,7 +143,9 @@ class QueueTab(QWidget):
         splitter.addWidget(top)
         splitter.addWidget(self.log)
         splitter.setStretchFactor(1, 2)
-        QVBoxLayout(self).addWidget(splitter)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(splitter)
 
         self.signals = BatchSignals()
         self.signals.job_status.connect(self._on_status)
@@ -119,6 +154,19 @@ class QueueTab(QWidget):
         self.signals.log.connect(self.log.appendPlainText)
         self.signals.finished.connect(self._on_finished)
         self._update_buttons()
+
+    def _setup_table(self) -> None:
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(COL_FILE, QHeaderView.ResizeMode.Stretch)
+        header.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        for col, width in ((COL_VARIANT, VARIANT_COL_WIDTH), (COL_STATUS, STATUS_COL_WIDTH),
+                           (COL_PROGRESS, PROGRESS_COL_WIDTH)):
+            self.table.setColumnWidth(col, width)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setShowGrid(False)
+        self.table.setAlternatingRowColors(True)
 
     # ------------------------------------------------------------ preset I/O
 
@@ -204,9 +252,7 @@ class QueueTab(QWidget):
             self.table.setItem(row, COL_FILE, QTableWidgetItem(job.source.name))
             self.table.setItem(row, COL_VARIANT, QTableWidgetItem(str(job.variant)))
             self.table.setItem(row, COL_STATUS, QTableWidgetItem(STATUS_LABELS["queued"]))
-            bar = QProgressBar()
-            bar.setRange(0, PROGRESS_STEPS)
-            self.table.setCellWidget(row, COL_PROGRESS, bar)
+            self.table.setCellWidget(row, COL_PROGRESS, make_progress_cell())
         self.overall.setRange(0, max(len(jobs), 1))
         self.overall.setValue(0)
         self.eta.setText("—")
@@ -217,21 +263,26 @@ class QueueTab(QWidget):
     def overall_value(self) -> tuple[int, int]:
         return self.overall.value(), self.overall.maximum()
 
+    def row_progress(self, row: int) -> QProgressBar:
+        return self.table.cellWidget(row, COL_PROGRESS).findChild(QProgressBar)
+
     def _on_status(self, index: int, status: str, message: str) -> None:
         item = self.table.item(index, COL_STATUS)
         item.setText(STATUS_LABELS.get(status, status))
         item.setToolTip(message)
+        color = STATUS_COLORS.get(status)
+        item.setForeground(QBrush(QColor(color)) if color else QBrush())
         if status in ("done", "skipped"):
             self._on_progress(index, 1.0)
 
     def _on_progress(self, index: int, frac: float) -> None:
-        bar = self.table.cellWidget(index, COL_PROGRESS)
-        bar.setValue(round(min(max(frac, 0.0), 1.0) * PROGRESS_STEPS))
+        self.row_progress(index).setValue(round(min(max(frac, 0.0), 1.0) * PROGRESS_STEPS))
 
     def _on_overall(self, done: int, total: int, eta) -> None:
         self.overall.setRange(0, max(total, 1))
         self.overall.setValue(done)
-        self.eta.setText(f"{done} / {total} · осталось {format_eta(eta)}")
+        percent = round(done / total * 100) if total else 0
+        self.eta.setText(f"{done} / {total} · {percent}% · осталось {format_eta(eta)}")
 
     def _on_finished(self, results: list[JobResult]) -> None:
         if self._thread is not None:

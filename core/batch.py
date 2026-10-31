@@ -31,6 +31,7 @@ from features.metadata import roll_metadata, verify_output
 
 LOG_FILE = "uniq.log"
 MIN_PROGRESS_FOR_ETA = 0.02
+ETA_SMOOTHING = 0.3
 
 
 class JobStopped(Exception):
@@ -68,10 +69,40 @@ def default_workers() -> int:
     return max(1, (os.cpu_count() or 2) // 2)
 
 
+class EtaEstimator:
+    """Remaining-time estimate that does not jump around or vanish near the end.
+
+    The first estimate is a linear extrapolation; later ones are blended in with
+    exponential smoothing. Once known, the estimate stays known until completion.
+    """
+
+    def __init__(self, min_progress: float = MIN_PROGRESS_FOR_ETA,
+                 smoothing: float = ETA_SMOOTHING):
+        self.min_progress = min_progress
+        self.smoothing = smoothing
+        self._last: float | None = None
+
+    def update(self, fraction: float, elapsed: float) -> float | None:
+        if fraction >= 1.0:
+            self._last = 0.0
+            return 0.0
+        if fraction < self.min_progress or fraction <= 0.0:
+            return self._last
+        raw = elapsed / fraction * (1.0 - fraction)
+        if self._last is None:
+            self._last = raw
+        else:
+            self._last += self.smoothing * (raw - self._last)
+        return self._last
+
+
 def format_eta(eta: float | None) -> str:
     if eta is None:
         return "--:--"
     minutes, seconds = divmod(int(eta), 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}:{minutes:02d}:{seconds:02d}"
     return f"{minutes:02d}:{seconds:02d}"
 
 
@@ -111,6 +142,7 @@ class BatchRunner:
         self._finished = 0
         self._taken_names: set[str] = set()
         self._started_at = 0.0
+        self._eta = EtaEstimator()
         self.results: list[JobResult] = []
         self.report: CsvReport | None = None
         self.encoder = SOFTWARE
@@ -158,6 +190,7 @@ class BatchRunner:
         workers = 1 if self.preview else (self.preset.batch.workers or default_workers())
         self._log(f"Старт: {len(self.jobs)} задач, потоков: {workers}, энкодер: {self.encoder}")
         self._started_at = time.monotonic()
+        self._eta = EtaEstimator()
         self._emit_overall()
         with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="uniq") as pool:
             futures = [pool.submit(self._run_job, job, caps, state) for job in self.jobs]
@@ -290,10 +323,7 @@ class BatchRunner:
             total = len(self.jobs)
             done = self._finished
             fraction = (done + sum(self._progress.values())) / total if total else 1.0
-        elapsed = time.monotonic() - self._started_at
-        eta = None
-        if MIN_PROGRESS_FOR_ETA <= fraction < 1.0:
-            eta = elapsed / fraction * (1.0 - fraction)
+            eta = self._eta.update(fraction, time.monotonic() - self._started_at)
         self.cb.on_overall(done, total, eta)
 
     def _write_report(self, job: Job, output: Path, plan: JobPlan, encoder: str, elapsed: float):

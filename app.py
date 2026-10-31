@@ -11,9 +11,11 @@ def main() -> int:
         print("PySide6 не установлен: pip install PySide6", file=sys.stderr)
         return 1
     from gui.main_window import MainWindow
+    from gui.theme import install_theme
 
     app = QApplication(sys.argv)
     app.setApplicationName("Shorts Uniq")
+    install_theme(app)
     window = MainWindow()
     window.show()
     return app.exec()

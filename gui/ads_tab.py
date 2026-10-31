@@ -64,7 +64,7 @@ class AdsTab(QWidget):
         self.list = QListWidget()
         self.editor = SectionForm(slot_groups())
         self.error = QLabel()
-        self.error.setStyleSheet("color: #c0392b")
+        self.error.setObjectName("error")
         self.error.setWordWrap(True)
 
         buttons = QHBoxLayout()
