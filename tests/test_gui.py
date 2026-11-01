@@ -145,6 +145,7 @@ def _ads_preset():
     return replace(Preset(), ads=AdSettings(enabled=True, slots=(
         AdSlot(path="promo.mp4", at="7", backdrop="blur"),
         AdSlot(mode="overlay", text="SALE", position="top-right", duration=3.0),
+        AdSlot(mode="overlay", path="g.mp4", chroma="color", chroma_key="#0047BB"),
     )))
 
 

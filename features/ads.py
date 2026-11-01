@@ -8,13 +8,14 @@ from __future__ import annotations
 
 import os
 import random
+import statistics
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
 
 from core.config import AdSettings, AdSlot
-from core.ffmpeg import FFmpegError, FFmpegTools, MediaInfo, probe
+from core.ffmpeg import FFmpegError, FFmpegTools, MediaInfo, grab_frame_rgb, probe
 from core.filtergraph import AUDIO_FORMAT, FilterGraph, color_to_ffmpeg, even, fmt, quote_path
 from core.sources import VIDEO_EXTENSIONS
 from core.timeline import TimelineMap, parse_time_spec
@@ -23,6 +24,12 @@ from features.uniq import pad_audio_to
 IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".webp"})
 MIN_AD_SECONDS = 0.3
 CHROMA_BLEND = 0.05
+# Automatic green/blue screen detection on a small thumbnail of the overlay video.
+CHROMA_SAMPLE_SIZE = 32
+CHROMA_SAMPLE_AT = (0.5, 0.0)  # seconds; the second try covers very short videos
+CHROMA_UNIFORM_SHARE = 0.6  # border pixels that must match the background colour
+CHROMA_UNIFORM_TOLERANCE = 40  # max per-channel difference from the median, 0-255
+CHROMA_DOMINANCE = 50  # how much green/blue must exceed the other two channels
 BANNER_PADDING = 24
 FONT_CANDIDATES = {
     "win32": [Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts" / "arial.ttf"],
@@ -55,6 +62,7 @@ class OverlayAd:
     path: str
     start: float  # output time
     end: float
+    key_color: str = ""  # "#RRGGBB" removed from a video overlay, see resolve_key_colors
 
     @property
     def duration(self) -> float:
@@ -135,6 +143,63 @@ def roll_overlays(
     return overlays
 
 
+# ------------------------------------------------------------- chroma key
+
+
+def _border_pixels(pixels: bytes, width: int, height: int) -> list[tuple[int, int, int]]:
+    def at(x: int, y: int) -> tuple[int, int, int]:
+        i = (y * width + x) * 3
+        return pixels[i], pixels[i + 1], pixels[i + 2]
+
+    rows = [at(x, y) for y in (0, height - 1) for x in range(width)]
+    cols = [at(x, y) for x in (0, width - 1) for y in range(1, height - 1)]
+    return rows + cols
+
+
+def _is_screen_colour(r: int, g: int, b: int) -> bool:
+    return g - max(r, b) >= CHROMA_DOMINANCE or b - max(r, g) >= CHROMA_DOMINANCE
+
+
+def key_color_from_pixels(pixels: bytes, width: int, height: int) -> str:
+    """The green/blue screen colour around the frame edges as "#RRGGBB", or "" if there is none.
+
+    A chroma background fills the edges of the frame with one saturated green or blue,
+    while the subject sits in the middle; ordinary footage has varied edges.
+    """
+    if width < 2 or height < 2 or len(pixels) < width * height * 3:
+        return ""
+    border = _border_pixels(pixels, width, height)
+    median = tuple(statistics.median_low(p[c] for p in border) for c in range(3))
+    matching = sum(1 for p in border
+                   if max(abs(p[c] - median[c]) for c in range(3)) <= CHROMA_UNIFORM_TOLERANCE)
+    if matching < CHROMA_UNIFORM_SHARE * len(border) or not _is_screen_colour(*median):
+        return ""
+    return "#{:02X}{:02X}{:02X}".format(*median)
+
+
+@lru_cache(maxsize=256)
+def detect_key_color(tools: FFmpegTools, path: str) -> str:
+    frame_bytes = CHROMA_SAMPLE_SIZE * CHROMA_SAMPLE_SIZE * 3
+    for at in CHROMA_SAMPLE_AT:
+        pixels = grab_frame_rgb(tools, path, at, CHROMA_SAMPLE_SIZE)
+        if len(pixels) >= frame_bytes:
+            return key_color_from_pixels(pixels, CHROMA_SAMPLE_SIZE, CHROMA_SAMPLE_SIZE)
+    raise AdError(f"Не удалось прочитать кадр из рекламного видео: {path}")
+
+
+def _key_color(tools: FFmpegTools, ov: OverlayAd) -> str:
+    if ov.kind != "video" or ov.slot.chroma == "off":
+        return ""
+    if ov.slot.chroma == "color":
+        return ov.slot.chroma_key
+    return detect_key_color(tools, ov.path)
+
+
+def resolve_key_colors(tools: FFmpegTools, overlays: list[OverlayAd]) -> list[OverlayAd]:
+    """Decide which colour to key out of each video overlay (detecting it in "auto" mode)."""
+    return [replace(ov, key_color=_key_color(tools, ov)) for ov in overlays]
+
+
 # ------------------------------------------------------------ clip pieces
 
 
@@ -193,8 +258,8 @@ def overlay_input_args(ov: OverlayAd, fps: str) -> list[str]:
 
 def overlay_source_filters(ov: OverlayAd, frame_w: int) -> list[str]:
     filters = []
-    if ov.kind == "video" and ov.slot.chroma_key:
-        filters.append(f"chromakey={color_to_ffmpeg(ov.slot.chroma_key)}"
+    if ov.key_color:
+        filters.append(f"chromakey={color_to_ffmpeg(ov.key_color)}"
                        f":{fmt(ov.slot.chroma_similarity, 3)}:{CHROMA_BLEND}")
     filters += [f"scale={even(frame_w * ov.slot.scale)}:-2:flags=bicubic", "format=yuva420p"]
     if ov.fade > 0:

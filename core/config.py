@@ -6,6 +6,7 @@ Every settings block is a frozen dataclass; changes are made with
 from __future__ import annotations
 
 import json
+import re
 import types
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from pathlib import Path
@@ -188,6 +189,10 @@ AD_POSITIONS = (
 
 # What fills the frame around a spliced clip while the main video is paused.
 AD_BACKDROPS = ("freeze", "blur", "black")
+# Green/blue screen removal for video overlays: detect the background colour, use
+# ``chroma_key``, or keep the video as it is.
+CHROMA_MODES = ("auto", "color", "off")
+HEX_COLOR = re.compile(r"#[0-9A-Fa-f]{6}")
 
 
 @dataclass(frozen=True)
@@ -200,7 +205,8 @@ class AdSlot:
     scale: float = 0.6  # overlay width as fraction of frame width
     margin: int = 80
     fade: float = 0.3
-    chroma_key: str = ""  # e.g. "#00FF00" for green-screen video overlays
+    chroma: str = "auto"  # video overlays, see CHROMA_MODES
+    chroma_key: str = "#00FF00"  # used when chroma == "color"
     chroma_similarity: float = 0.15
     text: str = ""
     text_size: int = 56
@@ -212,6 +218,9 @@ class AdSlot:
         _check_choice("ad.mode", self.mode, ("clip", "overlay"))
         _check_choice("ad.position", self.position, AD_POSITIONS)
         _check_choice("ad.backdrop", self.backdrop, AD_BACKDROPS)
+        _check_choice("ad.chroma", self.chroma, CHROMA_MODES)
+        if self.chroma == "color" and not HEX_COLOR.fullmatch(self.chroma_key):
+            raise ConfigError(f"ad.chroma_key must be #RRGGBB, got {self.chroma_key!r}")
         if not 0.05 <= self.scale <= 1.0:
             raise ConfigError("ad.scale must be within [0.05, 1]")
         if self.duration <= 0:

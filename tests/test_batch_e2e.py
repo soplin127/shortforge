@@ -220,3 +220,40 @@ def test_music_pauses_while_the_ad_plays_its_own_sound(tools, tmp_path):
     assert _mean_volume_db(tools, out, 0.2, 0.6) > -40  # music before the ad
     assert _mean_volume_db(tools, out, 1.3, 1.4) < -60  # silent ad, music paused
     assert _mean_volume_db(tools, out, 3.3, 0.6) > -40  # music back after the ad
+
+
+def _region_rgb(tools, video, at, crop):
+    """Average colour of the ``crop`` ("w:h:x:y") region at ``at`` seconds."""
+    raw = subprocess.run(
+        [tools.ffmpeg, "-v", "error", "-ss", str(at), "-i", str(video), "-frames:v", "1",
+         "-vf", f"crop={crop},scale=1:1:flags=area", "-pix_fmt", "rgb24", "-f", "rawvideo", "-"],
+        check=True, capture_output=True,
+    ).stdout
+    return tuple(raw[:3])
+
+
+@pytest.mark.parametrize("chroma, background_keyed", [("auto", True), ("off", False)])
+def test_green_screen_overlay_background_is_removed_automatically(tools, tmp_path, chroma,
+                                                                  background_keyed):
+    folder = tmp_path / "in"
+    folder.mkdir()
+    subprocess.run([tools.ffmpeg, "-v", "error", "-y", "-f", "lavfi", "-i",
+                    "color=c=black:s=360x640:r=30:d=2", "-c:v", "libx264", "-preset", "ultrafast",
+                    "-pix_fmt", "yuv420p", str(folder / "main.mp4")], check=True)
+    green = tmp_path / "green.mp4"
+    subprocess.run([tools.ffmpeg, "-v", "error", "-y", "-f", "lavfi", "-i",
+                    "color=c=0x00B140:s=360x360:r=30:d=2,drawbox=x=120:y=120:w=120:h=120:c=white:t=fill",
+                    "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", str(green)],
+                   check=True)
+    slot = AdSlot(mode="overlay", path=str(green), at="0", duration=2.0, position="center",
+                  scale=1.0, fade=0.0, chroma=chroma)
+    preset = replace(_preset(), ads=AdSettings(enabled=True, slots=(slot,)),
+                     output=OutputSettings(variants=1))
+
+    results = BatchRunner(tools, preset, [folder / "main.mp4"], tmp_path / "out").run()
+
+    assert results[0].status == "done", results[0].error
+    out = results[0].output
+    r, g, b = _region_rgb(tools, out, 1.0, "200:200:40:480")  # green corner of the overlay
+    assert (g - max(r, b) < 40) == background_keyed, (r, g, b)
+    assert min(_region_rgb(tools, out, 1.0, "120:120:480:900")) > 180  # white subject stays

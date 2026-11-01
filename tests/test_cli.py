@@ -63,6 +63,23 @@ def test_ad_backdrop_flag_applies_to_clips():
     assert preset.ads.slots[0].backdrop == "blur"
 
 
+@pytest.mark.parametrize("value, chroma, key", [
+    ("auto", "auto", "#00FF00"),
+    ("off", "off", "#00FF00"),
+    ("#0047bb", "color", "#0047BB"),
+])
+def test_ad_chroma_flag(value, chroma, key):
+    preset = _apply("--ad", "g.mp4", "--ad-mode", "overlay", "--ad-chroma", value)
+
+    slot = preset.ads.slots[0]
+    assert (slot.chroma, slot.chroma_key) == (chroma, key)
+
+
+def test_ad_chroma_flag_rejects_garbage():
+    with pytest.raises(ConfigError, match="--ad-chroma"):
+        _apply("--ad", "g.mp4", "--ad-chroma", "greenish")
+
+
 def test_cli_ads_replace_preset_slots():
     base = Preset(ads=AdSettings(enabled=True, slots=(AdSlot(path="old.mp4"),)))
 

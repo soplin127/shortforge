@@ -10,6 +10,7 @@ from core.batch import BatchCallbacks, BatchRunner, format_eta
 from core.config import (
     AD_BACKDROPS,
     AD_POSITIONS,
+    HEX_COLOR,
     HW_ACCEL_CHOICES,
     AdSettings,
     AdSlot,
@@ -74,6 +75,9 @@ def _add_ad_args(p: argparse.ArgumentParser) -> None:
     g.add_argument("--ad-backdrop", choices=AD_BACKDROPS,
                    help="фон вокруг вставленного ролика, пока основное видео на паузе: "
                         "freeze — стоп-кадр (по умолчанию), blur — размытый стоп-кадр, black — чёрные поля")
+    g.add_argument("--ad-chroma", metavar="auto|off|#RRGGBB",
+                   help="хромакей видео-оверлеев: auto — сам находит и убирает зелёный/синий фон "
+                        "(по умолчанию), off — без хромакея, #RRGGBB — убрать этот цвет")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -144,8 +148,16 @@ def _nth(values: list[str], index: int, default: str) -> str:
     return values[min(index, len(values) - 1)]
 
 
+def _chroma_from_arg(value: str) -> dict:
+    if value in ("auto", "off"):
+        return {"chroma": value}
+    if HEX_COLOR.fullmatch(value):
+        return {"chroma": "color", "chroma_key": value.upper()}
+    raise ConfigError(f"--ad-chroma: ожидается auto, off или #RRGGBB, получено {value!r}")
+
+
 def ad_slots_from_args(args: argparse.Namespace) -> tuple[AdSlot, ...]:
-    extra = {}
+    extra = _chroma_from_arg(args.ad_chroma) if args.ad_chroma else {}
     if args.ad_duration is not None:
         extra["duration"] = args.ad_duration
     if args.ad_position:
@@ -168,9 +180,9 @@ def ad_slots_from_args(args: argparse.Namespace) -> tuple[AdSlot, ...]:
 def _apply_ads(preset: Preset, args: argparse.Namespace) -> Preset:
     if not (args.ad or args.ad_text):
         if (args.ad_at or args.ad_mode or args.ad_duration is not None or args.ad_position
-                or args.ad_backdrop):
-            raise ConfigError("--ad-at/--ad-mode/--ad-duration/--ad-position/--ad-backdrop "
-                              "требуют --ad или --ad-text")
+                or args.ad_backdrop or args.ad_chroma):
+            raise ConfigError("--ad-at/--ad-mode/--ad-duration/--ad-position/--ad-backdrop/"
+                              "--ad-chroma требуют --ad или --ad-text")
         return preset
     return replace(preset, ads=AdSettings(enabled=True, slots=ad_slots_from_args(args)))
 

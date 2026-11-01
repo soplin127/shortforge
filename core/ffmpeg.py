@@ -117,16 +117,16 @@ def locate_tools(custom: str = "") -> FFmpegTools:
     raise FFmpegNotFound(f"Не найден {missing}.\n{install_hint()}")
 
 
-def _run_capture(cmd: list[str], timeout: float = 60) -> subprocess.CompletedProcess:
+def _run_capture(cmd: list[str], timeout: float = 60, binary: bool = False) -> subprocess.CompletedProcess:
+    """Run a tool and capture its output: decoded text, or raw bytes when ``binary``."""
+    text_kwargs = {} if binary else {"text": True, "encoding": "utf-8", "errors": "replace"}
     try:
         return subprocess.run(
             cmd,
             capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
             timeout=timeout,
             stdin=subprocess.DEVNULL,
+            **text_kwargs,
             **popen_kwargs(),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
@@ -275,6 +275,19 @@ def probe_raw(tools: FFmpegTools, path: str | Path) -> dict:
     if result.returncode != 0:
         raise FFmpegError(f"ffprobe: {result.stderr.strip()[-500:]}")
     return json.loads(result.stdout or "{}")
+
+
+def grab_frame_rgb(tools: FFmpegTools, path: str | Path, at: float, size: int) -> bytes:
+    """One frame at ``at`` seconds, scaled to size x size, as raw rgb24 bytes (may be empty)."""
+    result = _run_capture([
+        tools.ffmpeg, "-hide_banner", "-nostdin", "-loglevel", "error",
+        "-ss", f"{at:.3f}", "-i", str(path), "-frames:v", "1",
+        "-vf", f"scale={size}:{size}:flags=area", "-pix_fmt", "rgb24", "-f", "rawvideo", "-",
+    ], binary=True)
+    if result.returncode != 0:
+        stderr = result.stderr.decode("utf-8", "replace").strip()
+        raise FFmpegError(f"ffmpeg не смог прочитать кадр из {path}: {stderr[-500:]}")
+    return result.stdout
 
 
 # ------------------------------------------------------------- process control

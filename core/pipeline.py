@@ -26,6 +26,7 @@ from features.ads import (
     clip_audio_filters,
     clip_fit_filters,
     clip_video_filters,
+    resolve_key_colors,
     roll_clips,
     roll_overlays,
 )
@@ -226,8 +227,8 @@ def plan_job(
     v_out, a_out = _concat_timeline(graph, inputs, info, uniq, timeline, clips, target, fps)
 
     notes: dict[str, str] = {}
-    overlays = roll_overlays(preset.ads, rng, timeline,
-                             lambda t: start + t * uniq.speed, base_duration)
+    overlays = resolve_key_colors(ctx.tools, roll_overlays(
+        preset.ads, rng, timeline, lambda t: start + t * uniq.speed, base_duration))
     if overlays:
         _require_overlay_filters(ctx, overlays)
         v_out = apply_overlays(graph, inputs.add, v_out, overlays, target[0], fps, ctx.work_dir)
@@ -284,7 +285,7 @@ def plan_job(
 def _require_overlay_filters(ctx: JobContext, overlays: list[OverlayAd]) -> None:
     if any(ov.kind == "text" for ov in overlays):
         ctx.caps.require_filter("drawtext", "Текстовый баннер")
-    if any(ov.kind == "video" and ov.slot.chroma_key for ov in overlays):
+    if any(ov.key_color for ov in overlays):
         ctx.caps.require_filter("chromakey", "Хромакей")
 
 

@@ -4,7 +4,15 @@ from pathlib import Path
 
 import pytest
 
-from core.config import AdSettings, AdSlot, ConfigError, MetadataSettings, MusicSettings, Preset
+from core.config import (
+    AdSettings,
+    AdSlot,
+    ConfigError,
+    MetadataSettings,
+    MusicSettings,
+    Preset,
+    preset_from_dict,
+)
 from core.ffmpeg import Capabilities, FeatureUnavailable, FFmpegTools, MediaInfo
 from core.filtergraph import FilterGraph, fmt
 from core.pipeline import FREEZE_READ_SECONDS, JobContext, plan_job
@@ -15,9 +23,11 @@ from features.ads import (
     OverlayAd,
     apply_overlays,
     banner_filter,
+    key_color_from_pixels,
     overlay_source_filters,
     pick_file,
     position_xy,
+    resolve_key_colors,
     roll_clips,
     roll_overlays,
 )
@@ -100,8 +110,8 @@ def test_overlay_at_insertion_point_lands_after_the_clip():
 
 
 def test_video_overlay_filters_key_scale_fade_and_shift():
-    slot = AdSlot(mode="overlay", path="x.mp4", scale=0.5, fade=0.4, chroma_key="#00FF00")
-    ov = OverlayAd(slot, "video", "x.mp4", start=2.0, end=5.0)
+    slot = AdSlot(mode="overlay", path="x.mp4", scale=0.5, fade=0.4)
+    ov = OverlayAd(slot, "video", "x.mp4", start=2.0, end=5.0, key_color="#00FF00")
 
     filters = overlay_source_filters(ov, 1080)
 
@@ -239,3 +249,122 @@ def test_plan_job_requires_drawtext_for_banners(tmp_path):
     with pytest.raises(FeatureUnavailable, match="drawtext"):
         plan_job(ctx, source, random.Random(1), Path("o.mp4"),
                  roll_metadata(MetadataSettings(), random.Random(1)))
+
+
+# ------------------------------------------------------------- chroma key
+
+GREEN_SCREEN = (0, 177, 64)
+BLUE_SCREEN = (0, 71, 187)
+SUBJECT = (200, 60, 40)
+
+
+def _frame(size, border, subject=SUBJECT, noise=0, subject_rows=None):
+    """rgb24 bytes: ``border`` colour around a subject in the middle of the frame."""
+    rng = random.Random(0)
+    lo, hi = size // 4, size * 3 // 4
+    rows = subject_rows or range(lo, hi)
+    pixels = bytearray()
+    for y in range(size):
+        for x in range(size):
+            colour = subject if lo <= x < hi and y in rows else border
+            pixels += bytes(min(255, max(0, c + rng.randint(-noise, noise))) for c in colour)
+    return bytes(pixels)
+
+
+def test_green_screen_border_becomes_the_key_color():
+    assert key_color_from_pixels(_frame(16, GREEN_SCREEN), 16, 16) == "#00B140"
+
+
+def test_blue_screen_border_becomes_the_key_color():
+    assert key_color_from_pixels(_frame(16, BLUE_SCREEN), 16, 16) == "#0047BB"
+
+
+def test_noisy_screen_and_a_subject_touching_the_edge_still_key():
+    frame = _frame(32, GREEN_SCREEN, noise=12, subject_rows=range(8, 32))
+
+    color = key_color_from_pixels(frame, 32, 32)
+
+    assert color
+    r, g, b = (int(color[i:i + 2], 16) for i in (1, 3, 5))
+    assert abs(r - 0) <= 12 and abs(g - 177) <= 12 and abs(b - 64) <= 12
+
+
+@pytest.mark.parametrize("border", [(0, 0, 0), (240, 240, 240), (180, 40, 40)])
+def test_uniform_border_that_is_not_a_screen_colour_is_not_keyed(border):
+    assert key_color_from_pixels(_frame(16, border), 16, 16) == ""
+
+
+def test_ordinary_footage_with_a_busy_border_is_not_keyed():
+    rng = random.Random(1)
+    frame = bytes(rng.randrange(256) for _ in range(16 * 16 * 3))
+
+    assert key_color_from_pixels(frame, 16, 16) == ""
+
+
+def test_truncated_frame_is_not_keyed():
+    assert key_color_from_pixels(b"\x00\xb1\x40" * 10, 16, 16) == ""
+
+
+def _video_overlay(**slot_fields):
+    slot = AdSlot(mode="overlay", path="g.mp4", **slot_fields)
+    return OverlayAd(slot, "video", "g.mp4", 1.0, 3.0)
+
+
+def test_auto_chroma_keys_the_detected_background(monkeypatch):
+    monkeypatch.setattr(ads_mod, "detect_key_color", lambda tools, path: "#00B140")
+
+    [keyed] = resolve_key_colors(None, [_video_overlay()])
+
+    assert keyed.key_color == "#00B140"
+    assert overlay_source_filters(keyed, 1080)[0] == "chromakey=0x00B140:0.15:0.05"
+
+
+def test_auto_chroma_leaves_footage_without_a_screen_untouched(monkeypatch):
+    monkeypatch.setattr(ads_mod, "detect_key_color", lambda tools, path: "")
+
+    [plain] = resolve_key_colors(None, [_video_overlay()])
+
+    assert not any(f.startswith("chromakey") for f in overlay_source_filters(plain, 1080))
+
+
+def test_chroma_off_fixed_colour_and_images_skip_detection(monkeypatch):
+    monkeypatch.setattr(ads_mod, "detect_key_color",
+                        lambda tools, path: pytest.fail("detection must not run"))
+    image = OverlayAd(AdSlot(mode="overlay", path="logo.png"), "image", "logo.png", 1.0, 3.0)
+    overlays = [_video_overlay(chroma="off"),
+                _video_overlay(chroma="color", chroma_key="#0000FF"), image]
+
+    assert [ov.key_color for ov in resolve_key_colors(None, overlays)] == ["", "#0000FF", ""]
+
+
+def test_chroma_settings_are_validated():
+    with pytest.raises(ConfigError, match="chroma"):
+        AdSlot(path="a.mp4", chroma="magic")
+    with pytest.raises(ConfigError, match="chroma_key"):
+        AdSlot(path="a.mp4", chroma="color", chroma_key="green")
+
+
+def test_presets_saved_before_auto_chroma_switch_to_auto():
+    data = {"ads": {"enabled": True, "slots": [
+        {"mode": "overlay", "path": "g.mp4", "chroma_key": ""}]}}
+
+    assert preset_from_dict(data).ads.slots[0].chroma == "auto"
+
+
+def _plan_with_video_overlay(tmp_path, monkeypatch, filters=ALL_FILTERS):
+    (tmp_path / "g.mp4").write_bytes(b"x")
+    monkeypatch.setattr(ads_mod, "detect_key_color", lambda tools, path: "#00B140")
+    source = MediaInfo(path="src.mp4", duration=8.0, has_video=True, width=720, height=1280)
+    slot = AdSlot(mode="overlay", path=str(tmp_path / "g.mp4"), at="1", duration=2.0)
+    plan = plan_job(_ctx(tmp_path, _ads(slot), filters), source, random.Random(1),
+                    tmp_path / "o.mp4", roll_metadata(MetadataSettings(), random.Random(1)))
+    return plan.command[plan.command.index("-filter_complex") + 1]
+
+
+def test_plan_job_keys_a_green_screen_overlay_automatically(tmp_path, monkeypatch):
+    assert "chromakey=0x00B140:0.15:0.05" in _plan_with_video_overlay(tmp_path, monkeypatch)
+
+
+def test_plan_job_requires_chromakey_for_an_auto_keyed_overlay(tmp_path, monkeypatch):
+    with pytest.raises(FeatureUnavailable, match="chromakey"):
+        _plan_with_video_overlay(tmp_path, monkeypatch, filters=frozenset({"ass", "drawtext"}))
