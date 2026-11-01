@@ -143,7 +143,7 @@ def test_range_field_widens_bounds_for_out_of_range_preset(qapp):
 
 def _ads_preset():
     return replace(Preset(), ads=AdSettings(enabled=True, slots=(
-        AdSlot(path="promo.mp4", at="7"),
+        AdSlot(path="promo.mp4", at="7", backdrop="blur"),
         AdSlot(mode="overlay", text="SALE", position="top-right", duration=3.0),
     )))
 

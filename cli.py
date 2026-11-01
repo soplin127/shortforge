@@ -8,6 +8,7 @@ from pathlib import Path
 
 from core.batch import BatchCallbacks, BatchRunner, format_eta
 from core.config import (
+    AD_BACKDROPS,
     AD_POSITIONS,
     HW_ACCEL_CHOICES,
     AdSettings,
@@ -70,6 +71,9 @@ def _add_ad_args(p: argparse.ArgumentParser) -> None:
                    help="clip = вставка, overlay = поверх видео (по умолчанию clip)")
     g.add_argument("--ad-duration", type=float, help="длительность оверлея, с")
     g.add_argument("--ad-position", choices=AD_POSITIONS, help="позиция оверлея")
+    g.add_argument("--ad-backdrop", choices=AD_BACKDROPS,
+                   help="фон вокруг вставленного ролика, пока основное видео на паузе: "
+                        "freeze — стоп-кадр (по умолчанию), blur — размытый стоп-кадр, black — чёрные поля")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -146,6 +150,8 @@ def ad_slots_from_args(args: argparse.Namespace) -> tuple[AdSlot, ...]:
         extra["duration"] = args.ad_duration
     if args.ad_position:
         extra["position"] = args.ad_position
+    if args.ad_backdrop:
+        extra["backdrop"] = args.ad_backdrop
     slots = [
         AdSlot(mode=_nth(args.ad_mode, i, "clip"), path=path,
                at=_nth(args.ad_at, i, "50%"), **extra)
@@ -161,8 +167,10 @@ def ad_slots_from_args(args: argparse.Namespace) -> tuple[AdSlot, ...]:
 
 def _apply_ads(preset: Preset, args: argparse.Namespace) -> Preset:
     if not (args.ad or args.ad_text):
-        if args.ad_at or args.ad_mode or args.ad_duration is not None or args.ad_position:
-            raise ConfigError("--ad-at/--ad-mode/--ad-duration/--ad-position требуют --ad или --ad-text")
+        if (args.ad_at or args.ad_mode or args.ad_duration is not None or args.ad_position
+                or args.ad_backdrop):
+            raise ConfigError("--ad-at/--ad-mode/--ad-duration/--ad-position/--ad-backdrop "
+                              "требуют --ad или --ad-text")
         return preset
     return replace(preset, ads=AdSettings(enabled=True, slots=ad_slots_from_args(args)))
 

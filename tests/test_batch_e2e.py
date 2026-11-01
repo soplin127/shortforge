@@ -13,6 +13,7 @@ from core.config import (
     MusicSettings,
     OutputSettings,
     Preset,
+    Range,
     SubtitleSettings,
 )
 from core.ffmpeg import FFmpegNotFound, locate_tools, probe, probe_raw
@@ -154,7 +155,8 @@ def _top_band_luma(tools, video, at):
     return sum(raw) / len(raw)
 
 
-def test_ad_clip_is_spliced_and_overlays_rendered(tools, tmp_path):
+@pytest.mark.parametrize("backdrop, paused_frame_visible", [("freeze", True), ("black", False)])
+def test_ad_clip_is_spliced_and_overlays_rendered(tools, tmp_path, backdrop, paused_frame_visible):
     folder = tmp_path / "in"
     folder.mkdir()
     _make_clip(tools, folder / "main.mp4", size="360x640", seconds=3, audio=True)
@@ -164,7 +166,7 @@ def test_ad_clip_is_spliced_and_overlays_rendered(tools, tmp_path):
     subprocess.run([tools.ffmpeg, "-v", "error", "-y", "-f", "lavfi", "-i", "color=red:s=200x100",
                     "-frames:v", "1", str(ads_dir / "logo.png")], check=True)
     ads = AdSettings(enabled=True, slots=(
-        AdSlot(mode="clip", path=str(ads_dir / "promo.mp4"), at="0.5"),
+        AdSlot(mode="clip", path=str(ads_dir / "promo.mp4"), at="0.5", backdrop=backdrop),
         AdSlot(mode="overlay", path=str(ads_dir / "logo.png"), at="0.6", duration=1.0, position="top"),
         AdSlot(mode="overlay", text="Скидка 50%: сегодня", at="0.6", duration=1.0),
     ))
@@ -177,6 +179,44 @@ def test_ad_clip_is_spliced_and_overlays_rendered(tools, tmp_path):
     streams = {s["codec_type"]: float(s["duration"]) for s in probe_raw(tools, out)["streams"]}
     assert streams["video"] > 2.0 + 0.9  # the 2 s clip plus at least the kept source
     assert abs(streams["video"] - streams["audio"]) < 0.1
-    assert _top_band_luma(tools, out, 1.5) < 30  # letterboxed landscape ad: black bars
+    # landscape ad: the paused source frame shows above and below it, or black bars
+    assert (_top_band_luma(tools, out, 1.5) > 30) == paused_frame_visible
     report = next((tmp_path / "out").glob("report_*.csv")).read_text(encoding="utf-8")
     assert "clip:promo.mp4@0.5s" in report and "image:logo.png" in report and "text:text" in report
+
+
+def _mean_volume_db(tools, video, start, duration):
+    log = subprocess.run(
+        [tools.ffmpeg, "-hide_banner", "-ss", str(start), "-t", str(duration), "-i", str(video),
+         "-vn", "-af", "volumedetect", "-f", "null", "-"],
+        check=True, capture_output=True, text=True,
+    ).stderr
+    line = next(l for l in log.splitlines() if "mean_volume" in l)
+    return float(line.split("mean_volume:")[1].split("dB")[0])
+
+
+def test_music_pauses_while_the_ad_plays_its_own_sound(tools, tmp_path):
+    folder = tmp_path / "in"
+    folder.mkdir()
+    _make_clip(tools, folder / "main.mp4", size="360x640", seconds=4, audio=False)
+    ads_dir = tmp_path / "ads"
+    ads_dir.mkdir()
+    _make_clip(tools, ads_dir / "promo.mp4", size="360x640", seconds=2, audio=False)
+    song = tmp_path / "song.wav"
+    subprocess.run([tools.ffmpeg, "-v", "error", "-y", "-f", "lavfi", "-i", "sine=f=300:d=20",
+                    str(song)], check=True)
+    ads = AdSettings(enabled=True, slots=(
+        AdSlot(mode="clip", path=str(ads_dir / "promo.mp4"), at="1"),))
+    music = MusicSettings(enabled=True, path=str(song), volume_db=0.0, fade_in=0.0, fade_out=0.0)
+    uniq = replace(Preset().uniq, trim_start=Range(0.0, 0.0), trim_end=Range(0.0, 0.0),
+                   speed=Range(1.0, 1.0))
+    preset = replace(_preset(), ads=ads, music=music, uniq=uniq,
+                     output=OutputSettings(variants=1))
+
+    results = BatchRunner(tools, preset, [folder / "main.mp4"], tmp_path / "out").run()
+
+    assert results[0].status == "done", results[0].error
+    out = results[0].output
+    assert _mean_volume_db(tools, out, 0.2, 0.6) > -40  # music before the ad
+    assert _mean_volume_db(tools, out, 1.3, 1.4) < -60  # silent ad, music paused
+    assert _mean_volume_db(tools, out, 3.3, 0.6) > -40  # music back after the ad

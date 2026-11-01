@@ -41,6 +41,7 @@ class AdError(FFmpegError):
 class ClipAd:
     info: MediaInfo
     at: float  # seconds into the ad-free output
+    backdrop: str = "freeze"  # see core.config.AD_BACKDROPS
 
     @property
     def note(self) -> str:
@@ -104,7 +105,7 @@ def roll_clips(tools: FFmpegTools, ads: AdSettings, rng: random.Random, base_dur
         info = media_info(tools, str(pick_file(slot.path, VIDEO_EXTENSIONS, rng)))
         if info.duration < MIN_AD_SECONDS:
             raise AdError(f"Рекламный ролик слишком короткий: {info.path}")
-        clips.append(ClipAd(info, parse_time_spec(slot.at, base_duration, rng)))
+        clips.append(ClipAd(info, parse_time_spec(slot.at, base_duration, rng), slot.backdrop))
     return clips
 
 
@@ -137,15 +138,22 @@ def roll_overlays(
 # ------------------------------------------------------------ clip pieces
 
 
-def clip_video_filters(target: tuple[int, int], fps: str) -> list[str]:
+def clip_fit_filters(target: tuple[int, int], fps: str) -> list[str]:
+    """Scale a clip to fit inside the frame, keeping its aspect ratio (no padding)."""
     w, h = target
     return [
         f"scale={w}:{h}:force_original_aspect_ratio=decrease:flags=bicubic",
-        f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black",
         "setsar=1",
         f"fps={fps}",
         "format=yuv420p",
     ]
+
+
+def clip_video_filters(target: tuple[int, int], fps: str) -> list[str]:
+    """Fit a clip into the frame and letterbox it with black bars."""
+    w, h = target
+    fit = clip_fit_filters(target, fps)
+    return [fit[0], f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black", *fit[1:]]
 
 
 def clip_audio_filters(duration: float) -> list[str]:

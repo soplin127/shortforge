@@ -22,6 +22,11 @@ from gui.forms import FieldGroup, SectionForm
 VIDEO_FILTER = "Видео (*.mp4 *.mov *.webm *.mkv);;Все файлы (*)"
 OVERLAY_FILTER = "Картинки и видео (*.png *.jpg *.jpeg *.webp *.mp4 *.mov *.webm *.mkv);;Все файлы (*)"
 AT_HINT = "7 | 00:07 | 35% | random:20%-60%"
+BACKDROP_LABELS = [
+    ("freeze", "Стоп-кадр основного видео"),
+    ("blur", "Размытый стоп-кадр"),
+    ("black", "Чёрные поля"),
+]
 MODE_LABELS = {"clip": "Вставка", "overlay": "Оверлей"}
 
 
@@ -33,6 +38,10 @@ def slot_groups() -> list[FieldGroup]:
             ("text", "Текст баннера", TextField("если файл не указан")),
             ("at", "Когда", TextField(AT_HINT)),
         ]),
+        FieldGroup("Вставка ролика", "", [
+            ("backdrop", "Фон вокруг ролика", ChoiceField(BACKDROP_LABELS)),
+        ], hint="Основное видео стоит на паузе, пока играет ролик со своим звуком; "
+                "фоновая музыка на это время замолкает."),
         FieldGroup("Оверлей", "", [
             ("duration", "Длительность", FloatField(0.1, 120.0, 0.5, 1, " с")),
             ("position", "Позиция", ChoiceField(AD_POSITIONS)),

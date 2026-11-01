@@ -52,6 +52,15 @@ def test_ad_insertion_shifts_later_source_time():
                                                (pytest.approx(7.0), pytest.approx(8.0))]
 
 
+def test_ad_segment_remembers_the_source_moment_it_pauses_at():
+    timeline = build_timeline(1.0, 10.0, [(4.0, 3.0), (0.0, 1.0)], speed=2.0)
+
+    first, second = [s for s in timeline.segments if s.kind == "ad"]
+    assert (first.src_start, first.src_end) == (1.0, 1.0)  # clamped into the kept window
+    assert (second.src_start, second.src_end) == (4.0, 4.0)
+    assert timeline.ad_intervals() == [(0.0, 1.0), (2.5, 5.5)]
+
+
 def test_insertion_order_keeps_ad_index():
     timeline = build_timeline(0.0, 10.0, [(8.0, 1.0), (2.0, 2.0)], speed=1.0)
 

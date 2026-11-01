@@ -97,18 +97,41 @@ def music_filters(settings: MusicSettings, params: MusicParams) -> list[str]:
     return filters
 
 
+def _mix(graph: FilterGraph, voice: str, music: str) -> str:
+    return graph.one([voice, music], [
+        "amix=inputs=2:duration=first:normalize=0",
+        f"alimiter=limit={LIMITER_LEVEL}",
+    ], "a")
+
+
+def _windows_expr(intervals: list[tuple[float, float]]) -> str:
+    return "+".join(f"between(t,{fmt(a, 3)},{fmt(b, 3)})" for a, b in intervals)
+
+
 def mix_music(
     graph: FilterGraph,
     original: str,
     music_input: int,
     settings: MusicSettings,
     params: MusicParams,
+    ad_intervals: list[tuple[float, float]] = (),
 ) -> str:
-    """Return the label of the final audio: music alone, or music mixed under the original."""
-    music = graph.one([f"{music_input}:a:0"], music_filters(settings, params), "a")
-    if settings.replace_audio:
+    """Return the label of the final audio: music alone, or music mixed under the original.
+
+    During ``ad_intervals`` (spliced clips) the music is silent and the original track,
+    which carries the clip's own sound there, plays untouched.
+    """
+    filters = music_filters(settings, params)
+    ads = _windows_expr(list(ad_intervals))
+    if ads:
+        filters.append(f"volume=0:enable='{ads}'")
+    music = graph.one([f"{music_input}:a:0"], filters, "a")
+    if settings.replace_audio and not ads:
         graph.chain([original], ["anullsink"], "a", outputs=0)
         return music
+    if settings.replace_audio:
+        voice = graph.one([original], [f"volume=0:enable='not({ads})'"], "a")
+        return _mix(graph, voice, music)
 
     if settings.ducking:
         voice, sidechain = graph.chain([original], ["asplit=2"], "a", outputs=2)
@@ -121,8 +144,6 @@ def mix_music(
         voice = original
 
     if settings.original_volume_db:
-        voice = graph.one([voice], [f"volume={fmt(settings.original_volume_db, 2)}dB"], "a")
-    return graph.one([voice, music], [
-        "amix=inputs=2:duration=first:normalize=0",
-        f"alimiter=limit={LIMITER_LEVEL}",
-    ], "a")
+        gain = f"volume={fmt(settings.original_volume_db, 2)}dB"
+        voice = graph.one([voice], [f"{gain}:enable='not({ads})'" if ads else gain], "a")
+    return _mix(graph, voice, music)

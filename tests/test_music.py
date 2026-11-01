@@ -73,3 +73,34 @@ def test_replace_mode_discards_original_audio():
     assert "[a0]anullsink" in rendered
     assert "amix" not in rendered
     assert out in rendered
+
+
+def test_music_is_muted_while_spliced_ads_play():
+    graph = FilterGraph()
+
+    mix_music(graph, "a0", 2, MusicSettings(), _params(), ad_intervals=[(1.0, 3.0), (5.0, 6.5)])
+    rendered = graph.render()
+
+    assert "volume=0:enable='between(t,1,3)+between(t,5,6.5)'" in rendered
+
+
+def test_replace_mode_keeps_the_ads_own_sound():
+    graph = FilterGraph()
+
+    out = mix_music(graph, "a0", 1, MusicSettings(replace_audio=True), _params(),
+                    ad_intervals=[(2.0, 4.0)])
+    rendered = graph.render()
+
+    assert "anullsink" not in rendered
+    assert "[a0]volume=0:enable='not(between(t,2,4))'" in rendered
+    assert "amix=inputs=2" in rendered
+    assert rendered.endswith(f"[{out}]")
+
+
+def test_original_volume_change_spares_the_ads():
+    graph = FilterGraph()
+
+    mix_music(graph, "a0", 1, MusicSettings(original_volume_db=-6.0), _params(),
+              ad_intervals=[(2.0, 4.0)])
+
+    assert "volume=-6dB:enable='not(between(t,2,4))'" in graph.render()

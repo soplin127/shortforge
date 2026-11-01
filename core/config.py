@@ -186,6 +186,9 @@ AD_POSITIONS = (
     "bottom-left", "bottom", "bottom-right",
 )
 
+# What fills the frame around a spliced clip while the main video is paused.
+AD_BACKDROPS = ("freeze", "blur", "black")
+
 
 @dataclass(frozen=True)
 class AdSlot:
@@ -203,10 +206,12 @@ class AdSlot:
     text_size: int = 56
     text_color: str = "#FFFFFF"
     box_color: str = "#000000@0.6"
+    backdrop: str = "freeze"  # clip only, see AD_BACKDROPS
 
     def __post_init__(self) -> None:
         _check_choice("ad.mode", self.mode, ("clip", "overlay"))
         _check_choice("ad.position", self.position, AD_POSITIONS)
+        _check_choice("ad.backdrop", self.backdrop, AD_BACKDROPS)
         if not 0.05 <= self.scale <= 1.0:
             raise ConfigError("ad.scale must be within [0.05, 1]")
         if self.duration <= 0:

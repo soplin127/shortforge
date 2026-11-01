@@ -57,6 +57,12 @@ def test_ad_values_pair_by_index_and_last_value_repeats():
     assert (banner.mode, banner.text, banner.at) == ("overlay", "SALE", "40%")
 
 
+def test_ad_backdrop_flag_applies_to_clips():
+    preset = _apply("--ad", "a.mp4", "--ad-at", "7", "--ad-backdrop", "blur")
+
+    assert preset.ads.slots[0].backdrop == "blur"
+
+
 def test_cli_ads_replace_preset_slots():
     base = Preset(ads=AdSettings(enabled=True, slots=(AdSlot(path="old.mp4"),)))
 

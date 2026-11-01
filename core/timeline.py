@@ -74,6 +74,10 @@ class TimelineMap:
     def source_segments(self) -> list[Segment]:
         return [s for s in self.segments if s.kind == "source"]
 
+    def ad_intervals(self) -> list[tuple[float, float]]:
+        """Output intervals during which a spliced clip plays."""
+        return [(s.out_start, s.out_end) for s in self.segments if s.kind == "ad"]
+
     def to_output(self, t_src: float) -> float | None:
         """Map a source timestamp to output time; None if it was trimmed away."""
         sources = self.source_segments()
@@ -133,7 +137,9 @@ def build_timeline(
         at, ad_duration = insertions[idx]
         at = min(max(at, window_start), window_end)
         add_source(at)  # a sub-MIN_SEGMENT remainder is folded into the next piece
-        segments.append(Segment("ad", cursor_out, cursor_out + ad_duration, ad_index=idx))
+        # src_start/src_end mark the source moment the main video is paused at
+        segments.append(Segment("ad", cursor_out, cursor_out + ad_duration, at, at,
+                                ad_index=idx))
         cursor_out += ad_duration
     add_source(window_end)
     if not any(s.kind == "source" for s in segments):

@@ -18,12 +18,13 @@ from core.config import Preset
 from core.encoders import SOFTWARE, global_args, graph_tail, video_codec_args
 from core.ffmpeg import Capabilities, FFmpegTools, MediaInfo
 from core.filtergraph import AUDIO_RATE, FilterGraph, fmt, quote_path
-from core.timeline import TimelineMap, build_timeline
+from core.timeline import Segment, TimelineMap, build_timeline
 from features.ads import (
     ClipAd,
     OverlayAd,
     apply_overlays,
     clip_audio_filters,
+    clip_fit_filters,
     clip_video_filters,
     roll_clips,
     roll_overlays,
@@ -44,6 +45,9 @@ from features.uniq import (
 MIN_KEPT_SECONDS = 1.0
 SUBS_FILE = "subs.ass"  # written into the job work_dir, which is ffmpeg's cwd
 VIDEO_PAD_SECONDS = 1.0  # clone-pad slack so every concat piece is exactly its length
+FREEZE_READ_SECONDS = 0.5  # source read at the pause point; only its first frame is kept
+BLUR_FILTER = "boxblur=luma_radius=40:luma_power=2"
+CENTER_OVERLAY = "overlay=x=(W-w)/2:y=(H-h)/2"
 
 
 @dataclass(frozen=True)
@@ -89,9 +93,9 @@ def kept_window(info: MediaInfo, params: UniqParams) -> tuple[float, float]:
     return start, end
 
 
-def _exact_length(duration: float) -> list[str]:
+def _exact_length(duration: float, pad: float = VIDEO_PAD_SECONDS) -> list[str]:
     return [
-        f"tpad=stop_mode=clone:stop_duration={fmt(VIDEO_PAD_SECONDS)}",
+        f"tpad=stop_mode=clone:stop_duration={fmt(pad, 4)}",
         f"trim=duration={fmt(duration, 4)}",
         "setpts=PTS-STARTPTS",
     ]
@@ -118,17 +122,52 @@ def _source_piece(
     return v, a
 
 
-def _clip_piece(
+def _frozen_frame(
     graph: FilterGraph,
     inputs: InputList,
-    clip: ClipAd,
+    info: MediaInfo,
+    params: UniqParams,
+    paused_at: float,
     out_duration: float,
     target: tuple[int, int],
     fps: str,
+    blur: bool,
+) -> str:
+    """The source frame at ``paused_at`` (with the same uniq look), held for ``out_duration``."""
+    seek = max(0.0, min(paused_at, info.duration - FREEZE_READ_SECONDS))
+    idx = inputs.add("-ss", fmt(seek, 4), "-t", fmt(FREEZE_READ_SECONDS, 3), "-i", info.path)
+    filters = source_video_filters(params, info.width, info.height, *target, fps)
+    filters.append("trim=end_frame=1")
+    if blur:
+        filters.append(BLUR_FILTER)
+    hold = _exact_length(out_duration, pad=out_duration + VIDEO_PAD_SECONDS)
+    return graph.one([f"{idx}:v:0"], filters + hold, "v")
+
+
+def _clip_piece(
+    graph: FilterGraph,
+    inputs: InputList,
+    info: MediaInfo,
+    params: UniqParams,
+    clip: ClipAd,
+    seg: Segment,
+    target: tuple[int, int],
+    fps: str,
 ) -> tuple[str, str]:
-    """A spliced-in ad clip, letterboxed to the target size; no uniq effects."""
+    """A spliced-in ad clip with its own sound while the main video stays paused behind it.
+
+    The clip is fitted into the frame (no uniq effects) and centered over the frozen
+    source frame, or letterboxed with black bars for the "black" backdrop.
+    """
+    out_duration = seg.out_duration
     idx = inputs.add("-t", fmt(out_duration, 4), "-i", clip.info.path)
-    v = graph.one([f"{idx}:v:0"], clip_video_filters(target, fps) + _exact_length(out_duration), "v")
+    if clip.backdrop == "black":
+        v = graph.one([f"{idx}:v:0"], clip_video_filters(target, fps) + _exact_length(out_duration), "v")
+    else:
+        fg = graph.one([f"{idx}:v:0"], clip_fit_filters(target, fps) + _exact_length(out_duration), "v")
+        bg = _frozen_frame(graph, inputs, info, params, seg.src_start, out_duration, target, fps,
+                           blur=clip.backdrop == "blur")
+        v = graph.one([bg, fg], [CENTER_OVERLAY, "format=yuv420p"], "v")
     if clip.info.has_audio:
         a = graph.one([f"{idx}:a:0"], clip_audio_filters(out_duration), "a")
     else:
@@ -149,7 +188,7 @@ def _concat_timeline(
     pieces: list[str] = []
     for seg in timeline.segments:
         if seg.kind == "ad":
-            pieces += _clip_piece(graph, inputs, clips[seg.ad_index], seg.out_duration, target, fps)
+            pieces += _clip_piece(graph, inputs, info, uniq, clips[seg.ad_index], seg, target, fps)
         else:
             pieces += _source_piece(graph, inputs, info, uniq, seg.src_start, seg.src_end,
                                     seg.out_duration, target, fps)
@@ -205,7 +244,8 @@ def plan_job(
 
     music = _roll_music(ctx, rng, timeline.duration)
     if music:
-        a_out = mix_music(graph, a_out, inputs.add(*music_input_args(music)), preset.music, music)
+        a_out = mix_music(graph, a_out, inputs.add(*music_input_args(music)), preset.music, music,
+                          ad_intervals=timeline.ad_intervals())
         notes["music"] = music.note
 
     expected = timeline.duration
