@@ -257,3 +257,33 @@ def test_green_screen_overlay_background_is_removed_automatically(tools, tmp_pat
     r, g, b = _region_rgb(tools, out, 1.0, "200:200:40:480")  # green corner of the overlay
     assert (g - max(r, b) < 40) == background_keyed, (r, g, b)
     assert min(_region_rgb(tools, out, 1.0, "120:120:480:900")) > 180  # white subject stays
+
+
+@pytest.mark.parametrize("backdrop, chroma, expected", [
+    ("freeze", "auto", "red"),    # the paused red frame shows through the keyed screen
+    ("black", "auto", "black"),
+    ("freeze", "off", "green"),
+])
+def test_green_screen_ad_clip_is_keyed_over_its_backdrop(tools, tmp_path, backdrop, chroma, expected):
+    folder = tmp_path / "in"
+    folder.mkdir()
+    subprocess.run([tools.ffmpeg, "-v", "error", "-y", "-f", "lavfi", "-i",
+                    "color=c=red:s=360x640:r=30:d=3", "-c:v", "libx264", "-preset", "ultrafast",
+                    "-pix_fmt", "yuv420p", str(folder / "main.mp4")], check=True)
+    green = tmp_path / "green.mp4"
+    subprocess.run([tools.ffmpeg, "-v", "error", "-y", "-f", "lavfi", "-i",
+                    "color=c=0x00B140:s=360x360:r=30:d=2,drawbox=x=120:y=120:w=120:h=120:c=white:t=fill",
+                    "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", str(green)],
+                   check=True)
+    slot = AdSlot(mode="clip", path=str(green), at="0.5", backdrop=backdrop, chroma=chroma)
+    preset = replace(_preset(), ads=AdSettings(enabled=True, slots=(slot,)),
+                     output=OutputSettings(variants=1))
+
+    results = BatchRunner(tools, preset, [folder / "main.mp4"], tmp_path / "out").run()
+
+    assert results[0].status == "done", results[0].error
+    out = results[0].output
+    r, g, b = _region_rgb(tools, out, 1.5, "200:200:40:480")  # green corner of the clip
+    looks = {"red": r > max(g, b) + 60, "black": max(r, g, b) < 40, "green": g > max(r, b) + 40}
+    assert looks[expected], (r, g, b)
+    assert min(_region_rgb(tools, out, 1.5, "120:120:480:900")) > 180  # white subject stays

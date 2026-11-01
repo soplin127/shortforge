@@ -49,6 +49,8 @@ class ClipAd:
     info: MediaInfo
     at: float  # seconds into the ad-free output
     backdrop: str = "freeze"  # see core.config.AD_BACKDROPS
+    key_color: str = ""  # "#RRGGBB" removed from the clip so the backdrop shows through
+    key_similarity: float = 0.15
 
     @property
     def note(self) -> str:
@@ -113,7 +115,8 @@ def roll_clips(tools: FFmpegTools, ads: AdSettings, rng: random.Random, base_dur
         info = media_info(tools, str(pick_file(slot.path, VIDEO_EXTENSIONS, rng)))
         if info.duration < MIN_AD_SECONDS:
             raise AdError(f"Рекламный ролик слишком короткий: {info.path}")
-        clips.append(ClipAd(info, parse_time_spec(slot.at, base_duration, rng), slot.backdrop))
+        clips.append(ClipAd(info, parse_time_spec(slot.at, base_duration, rng), slot.backdrop,
+                            slot_key_color(tools, slot, info.path), slot.chroma_similarity))
     return clips
 
 
@@ -187,17 +190,23 @@ def detect_key_color(tools: FFmpegTools, path: str) -> str:
     raise AdError(f"Не удалось прочитать кадр из рекламного видео: {path}")
 
 
-def _key_color(tools: FFmpegTools, ov: OverlayAd) -> str:
-    if ov.kind != "video" or ov.slot.chroma == "off":
+def slot_key_color(tools: FFmpegTools, slot: AdSlot, path: str) -> str:
+    """The colour to key out of a slot's video ("" for none), detected in "auto" mode."""
+    if slot.chroma == "off":
         return ""
-    if ov.slot.chroma == "color":
-        return ov.slot.chroma_key
-    return detect_key_color(tools, ov.path)
+    if slot.chroma == "color":
+        return slot.chroma_key
+    return detect_key_color(tools, path)
 
 
 def resolve_key_colors(tools: FFmpegTools, overlays: list[OverlayAd]) -> list[OverlayAd]:
-    """Decide which colour to key out of each video overlay (detecting it in "auto" mode)."""
-    return [replace(ov, key_color=_key_color(tools, ov)) for ov in overlays]
+    """Decide which colour to key out of each video overlay."""
+    return [replace(ov, key_color=slot_key_color(tools, ov.slot, ov.path) if ov.kind == "video" else "")
+            for ov in overlays]
+
+
+def chroma_key_filter(color: str, similarity: float) -> str:
+    return f"chromakey={color_to_ffmpeg(color)}:{fmt(similarity, 3)}:{CHROMA_BLEND}"
 
 
 # ------------------------------------------------------------ clip pieces
@@ -212,6 +221,14 @@ def clip_fit_filters(target: tuple[int, int], fps: str) -> list[str]:
         f"fps={fps}",
         "format=yuv420p",
     ]
+
+
+def clip_keyed_filters(clip: ClipAd, target: tuple[int, int], fps: str) -> list[str]:
+    """Fit a clip into the frame and make its green/blue screen transparent (if it has one)."""
+    fit = clip_fit_filters(target, fps)
+    if not clip.key_color:
+        return fit
+    return [*fit, chroma_key_filter(clip.key_color, clip.key_similarity), "format=yuva420p"]
 
 
 def clip_video_filters(target: tuple[int, int], fps: str) -> list[str]:
@@ -259,8 +276,7 @@ def overlay_input_args(ov: OverlayAd, fps: str) -> list[str]:
 def overlay_source_filters(ov: OverlayAd, frame_w: int) -> list[str]:
     filters = []
     if ov.key_color:
-        filters.append(f"chromakey={color_to_ffmpeg(ov.key_color)}"
-                       f":{fmt(ov.slot.chroma_similarity, 3)}:{CHROMA_BLEND}")
+        filters.append(chroma_key_filter(ov.key_color, ov.slot.chroma_similarity))
     filters += [f"scale={even(frame_w * ov.slot.scale)}:-2:flags=bicubic", "format=yuva420p"]
     if ov.fade > 0:
         filters += [

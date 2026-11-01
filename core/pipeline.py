@@ -24,7 +24,7 @@ from features.ads import (
     OverlayAd,
     apply_overlays,
     clip_audio_filters,
-    clip_fit_filters,
+    clip_keyed_filters,
     clip_video_filters,
     resolve_key_colors,
     roll_clips,
@@ -157,23 +157,42 @@ def _clip_piece(
 ) -> tuple[str, str]:
     """A spliced-in ad clip with its own sound while the main video stays paused behind it.
 
-    The clip is fitted into the frame (no uniq effects) and centered over the frozen
-    source frame, or letterboxed with black bars for the "black" backdrop.
+    The clip is fitted into the frame (no uniq effects) and centered over its backdrop:
+    the frozen source frame (sharp or blurred) or black. A green/blue screen in the clip
+    is keyed out so the backdrop shows through it.
     """
     out_duration = seg.out_duration
     idx = inputs.add("-t", fmt(out_duration, 4), "-i", clip.info.path)
-    if clip.backdrop == "black":
+    if clip.backdrop == "black" and not clip.key_color:
         v = graph.one([f"{idx}:v:0"], clip_video_filters(target, fps) + _exact_length(out_duration), "v")
     else:
-        fg = graph.one([f"{idx}:v:0"], clip_fit_filters(target, fps) + _exact_length(out_duration), "v")
-        bg = _frozen_frame(graph, inputs, info, params, seg.src_start, out_duration, target, fps,
-                           blur=clip.backdrop == "blur")
+        fg = graph.one([f"{idx}:v:0"], clip_keyed_filters(clip, target, fps) + _exact_length(out_duration), "v")
+        bg = _clip_backdrop(graph, inputs, info, params, clip, seg, target, fps)
         v = graph.one([bg, fg], [CENTER_OVERLAY, "format=yuv420p"], "v")
     if clip.info.has_audio:
         a = graph.one([f"{idx}:a:0"], clip_audio_filters(out_duration), "a")
     else:
         a = graph.one([], silence_filters(out_duration), "a")
     return v, a
+
+
+def _clip_backdrop(
+    graph: FilterGraph,
+    inputs: InputList,
+    info: MediaInfo,
+    params: UniqParams,
+    clip: ClipAd,
+    seg: Segment,
+    target: tuple[int, int],
+    fps: str,
+) -> str:
+    out_duration = seg.out_duration
+    if clip.backdrop != "black":
+        return _frozen_frame(graph, inputs, info, params, seg.src_start, out_duration, target, fps,
+                             blur=clip.backdrop == "blur")
+    w, h = target
+    black = [f"color=c=black:s={w}x{h}:r={fps}:d={fmt(out_duration, 4)}", "setsar=1", "format=yuv420p"]
+    return graph.one([], black + _exact_length(out_duration), "v")
 
 
 def _concat_timeline(
@@ -229,8 +248,8 @@ def plan_job(
     notes: dict[str, str] = {}
     overlays = resolve_key_colors(ctx.tools, roll_overlays(
         preset.ads, rng, timeline, lambda t: start + t * uniq.speed, base_duration))
+    _require_ad_filters(ctx, clips, overlays)
     if overlays:
-        _require_overlay_filters(ctx, overlays)
         v_out = apply_overlays(graph, inputs.add, v_out, overlays, target[0], fps, ctx.work_dir)
     if clips or overlays:
         notes["ads"] = "; ".join(ad.note for ad in [*clips, *overlays])
@@ -282,10 +301,10 @@ def plan_job(
     )
 
 
-def _require_overlay_filters(ctx: JobContext, overlays: list[OverlayAd]) -> None:
+def _require_ad_filters(ctx: JobContext, clips: list[ClipAd], overlays: list[OverlayAd]) -> None:
     if any(ov.kind == "text" for ov in overlays):
         ctx.caps.require_filter("drawtext", "Текстовый баннер")
-    if any(ov.key_color for ov in overlays):
+    if any(ad.key_color for ad in [*clips, *overlays]):
         ctx.caps.require_filter("chromakey", "Хромакей")
 
 

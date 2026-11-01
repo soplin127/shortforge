@@ -44,10 +44,11 @@ def _ads(*slots):
     return AdSettings(enabled=True, slots=tuple(slots))
 
 
-def _fake_clip(monkeypatch, duration=2.0):
+def _fake_clip(monkeypatch, duration=2.0, key_color=""):
     info = MediaInfo(path="promo.mp4", duration=duration, has_video=True, width=640, height=360,
                      has_audio=True)
     monkeypatch.setattr(ads_mod, "media_info", lambda tools, path: replace(info, path=path))
+    monkeypatch.setattr(ads_mod, "detect_key_color", lambda tools, path: key_color)
     return info
 
 
@@ -174,13 +175,13 @@ def test_plan_job_splices_clip_and_grows_duration(tmp_path, monkeypatch):
     assert plan.notes["ads"].startswith("clip:promo.mp4@2.0s")
 
 
-def _plan_with_clip(tmp_path, monkeypatch, backdrop):
+def _plan_with_clip(tmp_path, monkeypatch, backdrop, key_color="", filters=ALL_FILTERS, **slot_fields):
     (tmp_path / "promo.mp4").write_bytes(b"x")
-    _fake_clip(monkeypatch, duration=2.0)
+    _fake_clip(monkeypatch, duration=2.0, key_color=key_color)
     source = MediaInfo(path="src.mp4", duration=8.0, has_video=True, width=720, height=1280,
                        has_audio=True)
-    slot = AdSlot(mode="clip", path=str(tmp_path), at="2", backdrop=backdrop)
-    plan = plan_job(_ctx(tmp_path, _ads(slot)), source, random.Random(5), tmp_path / "o.mp4",
+    slot = AdSlot(mode="clip", path=str(tmp_path), at="2", backdrop=backdrop, **slot_fields)
+    plan = plan_job(_ctx(tmp_path, _ads(slot), filters), source, random.Random(5), tmp_path / "o.mp4",
                     roll_metadata(MetadataSettings(), random.Random(5)))
     return plan, plan.command[plan.command.index("-filter_complex") + 1]
 
@@ -368,3 +369,39 @@ def test_plan_job_keys_a_green_screen_overlay_automatically(tmp_path, monkeypatc
 def test_plan_job_requires_chromakey_for_an_auto_keyed_overlay(tmp_path, monkeypatch):
     with pytest.raises(FeatureUnavailable, match="chromakey"):
         _plan_with_video_overlay(tmp_path, monkeypatch, filters=frozenset({"ass", "drawtext"}))
+
+
+def test_roll_clips_detects_the_green_screen_of_a_spliced_clip(tmp_path, monkeypatch):
+    (tmp_path / "promo.mp4").write_bytes(b"x")
+    _fake_clip(monkeypatch, key_color="#00B140")
+    slots = (AdSlot(mode="clip", path=str(tmp_path / "promo.mp4"), at="1"),
+             AdSlot(mode="clip", path=str(tmp_path / "promo.mp4"), at="2", chroma="off"),
+             AdSlot(mode="clip", path=str(tmp_path / "promo.mp4"), at="3",
+                    chroma="color", chroma_key="#0000FF"))
+
+    clips = roll_clips(None, _ads(*slots), random.Random(1), 10.0)
+
+    assert [c.key_color for c in clips] == ["#00B140", "", "#0000FF"]
+
+
+@pytest.mark.parametrize("backdrop", ["freeze", "blur", "black"])
+def test_green_screen_clip_is_keyed_over_its_backdrop(tmp_path, monkeypatch, backdrop):
+    _, graph = _plan_with_clip(tmp_path, monkeypatch, backdrop, key_color="#00B140")
+
+    assert "chromakey=0x00B140:0.15:0.05" in graph
+    assert "overlay=x=(W-w)/2:y=(H-h)/2" in graph
+    assert ":(ow-iw)/2:(oh-ih)/2:color=black" not in graph  # letterboxing hides the backdrop
+    if backdrop == "black":
+        assert "color=c=black:s=1080x1920" in graph
+
+
+def test_clip_without_a_screen_is_not_keyed(tmp_path, monkeypatch):
+    _, graph = _plan_with_clip(tmp_path, monkeypatch, "freeze")
+
+    assert "chromakey" not in graph
+
+
+def test_keyed_clip_requires_chromakey(tmp_path, monkeypatch):
+    with pytest.raises(FeatureUnavailable, match="chromakey"):
+        _plan_with_clip(tmp_path, monkeypatch, "freeze", key_color="#00B140",
+                        filters=frozenset({"ass", "drawtext"}))

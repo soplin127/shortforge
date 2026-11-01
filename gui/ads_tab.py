@@ -53,11 +53,13 @@ def slot_groups() -> list[FieldGroup]:
             ("scale", "Ширина от кадра", FloatField(0.05, 1.0, 0.05, 2)),
             ("margin", "Отступ", IntField(0, 500)),
             ("fade", "Появление/исчезание", FloatField(0.0, 5.0, 0.1, 1, " с")),
-            ("chroma", "Хромакей", ChoiceField(CHROMA_LABELS)),
-            ("chroma_key", "Цвет хромакея", ColorField()),
-            ("chroma_similarity", "Допуск хромакея", FloatField(0.01, 1.0, 0.01, 2)),
-        ], hint="Для видео: в режиме «Авто» фон находится по краям кадра "
-                "и убирается сам, если он однотонный зелёный или синий."),
+        ]),
+        FieldGroup("Хромакей", "", [
+            ("chroma", "Режим", ChoiceField(CHROMA_LABELS)),
+            ("chroma_key", "Цвет", ColorField()),
+            ("chroma_similarity", "Допуск", FloatField(0.01, 1.0, 0.01, 2)),
+        ], hint="Для вставленных роликов и видео-оверлеев: в режиме «Авто» однотонный "
+                "зелёный или синий фон находится по краям кадра и убирается сам."),
         FieldGroup("Баннер", "", [
             ("text_size", "Размер текста", IntField(8, 300)),
             ("text_color", "Цвет текста", ColorField()),
