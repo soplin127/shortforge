@@ -222,7 +222,8 @@ def main(argv: list[str] | None = None) -> int:
         print(exc, file=sys.stderr)
         return 3
 
-    sources = collect_sources(args.input, args.recursive or preset.output.recursive)
+    sources = collect_sources(args.input, args.recursive or preset.output.recursive,
+                              exclude=[args.output])
     if not sources:
         print("Не найдено видео (mp4/mov/webm/mkv)", file=sys.stderr)
         return 1
