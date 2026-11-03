@@ -215,7 +215,7 @@ class MainWindow(QMainWindow):
         if not preset.output.output_dir:
             self.show_error("Укажите папку результата на вкладке «Файлы».")
             return None
-        sources = self.files.sources(preset.output.recursive)
+        sources = self.files.sources(preset.output.recursive, preset.output.output_dir)
         if not sources:
             self.show_error("Нет видео для обработки: добавьте файлы или папки на вкладке «Файлы».")
             return None

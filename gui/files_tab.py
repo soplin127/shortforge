@@ -120,8 +120,8 @@ class FilesTab(QWidget):
         self.list.clear()
         self._update_count()
 
-    def sources(self, recursive: bool) -> list[Path]:
-        return collect_sources(self.paths(), recursive)
+    def sources(self, recursive: bool, exclude: str = "") -> list[Path]:
+        return collect_sources(self.paths(), recursive, exclude=[exclude])
 
     def _remove_selected(self) -> None:
         for item in self.list.selectedItems():
