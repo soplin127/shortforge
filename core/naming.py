@@ -17,10 +17,12 @@ MAX_STEM_LEN = 120
 
 
 def _sanitize(name: str) -> str:
-    name = INVALID_CHARS.sub("_", name).strip().rstrip(".")
-    if not name or name.upper() in WINDOWS_RESERVED:
+    name = INVALID_CHARS.sub("_", name).strip().rstrip(". ")
+    # Windows reserves the device name with any extension too: "NUL.txt" is NUL.
+    if not name or name.split(".", 1)[0].rstrip().upper() in WINDOWS_RESERVED:
         name = f"_{name}"
-    return name[:MAX_STEM_LEN]
+    # Windows drops trailing dots and spaces, so the cut must not leave any.
+    return name[:MAX_STEM_LEN].rstrip(". ") or "_"
 
 
 def render_name(
