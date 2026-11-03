@@ -69,3 +69,25 @@ def test_signature_scan_on_clean_file(tmp_path):
     path.write_bytes(b"\x00\x01 just bytes " * 1000)
 
     assert md.find_signatures(str(path)) == []
+
+
+def test_encoder_tag_detected_on_any_stream():
+    clean = {"streams": [{"tags": {"language": "und"}}, {}]}
+    tagged = {"streams": [{"tags": {"encoder": "Lavc libx264"}}]}
+
+    assert not md.has_encoder_tag(clean)
+    assert not md.has_encoder_tag({})
+    assert md.has_encoder_tag(tagged)
+
+
+def test_retag_command_copies_streams_and_reapplies_metadata():
+    params = md.roll_metadata(MetadataSettings(), random.Random(1))
+
+    cmd = md.retag_command("ffmpeg", "in.mp4", "out.mp4", params)
+
+    assert cmd[0] == "ffmpeg"
+    assert cmd[cmd.index("-i") + 1] == "in.mp4"
+    assert ["-map", "0", "-c", "copy"] == cmd[cmd.index("-map"):][:4]
+    assert md.metadata_args(params) == cmd[cmd.index("-map_metadata"):][:len(md.metadata_args(params))]
+    assert "-c:v" not in cmd
+    assert cmd[-1] == "out.mp4"
