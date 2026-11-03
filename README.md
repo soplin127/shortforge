@@ -1,5 +1,7 @@
 # ShortForge
 
+[![tests](https://github.com/soplin127/shortforge/actions/workflows/tests.yml/badge.svg)](https://github.com/soplin127/shortforge/actions/workflows/tests.yml)
+
 **Пачка уникальных вариантов из каждого ролика для TikTok, YouTube Shorts и Reels.**
 
 Положите видео в программу и выберите, сколько вариантов нужно. ShortForge слегка и каждый
@@ -184,6 +186,11 @@ python -m pytest -q
 
 Тесты, которым нужен ffmpeg, пропускаются, если он не установлен; GUI-тесты работают
 без экрана (`QT_QPA_PLATFORM=offscreen`).
+
+В GitHub Actions тесты идут на Ubuntu, macOS и Windows для каждого pull request и push в
+`main`. Полный прогон с ffmpeg (сквозные тесты кодирования) — на Ubuntu, где стоит
+системный ffmpeg 6.1; на macOS и Windows эти тесты пропускаются. GUI-тесты идут на всех
+трёх системах.
 
 ## Лицензия
 
