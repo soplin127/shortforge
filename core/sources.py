@@ -11,6 +11,16 @@ def is_video(path: Path) -> bool:
     return path.is_file() and path.suffix.lower() in VIDEO_EXTENSIONS and not path.name.startswith(".")
 
 
+def _file_key(path: Path) -> tuple:
+    """Same file, same key: also for two spellings of one name on a case-insensitive disk.
+
+    Paths are not lowercased, so "A.mp4" and "a.mp4" stay two files where the disk
+    is case-sensitive. A zero inode (some network shares) falls back to the path.
+    """
+    st = path.stat()
+    return (st.st_dev, st.st_ino) if st.st_ino else ("path", str(path))
+
+
 def _folder_videos(folder: Path, recursive: bool, skipped: list[Path]) -> Iterable[Path]:
     """Videos in ``folder``, leaving out anything under a skipped subfolder."""
     root = folder.resolve()
@@ -33,12 +43,12 @@ def collect_sources(
     so a re-run does not pick up its own results.
     """
     skipped = [Path(raw).expanduser().resolve() for raw in exclude if raw]
-    found: dict[str, Path] = {}
+    found: dict[tuple, Path] = {}
     for raw in paths:
         path = Path(raw).expanduser()
         if path.is_dir():
             for item in _folder_videos(path, recursive, skipped):
-                found.setdefault(str(item).lower(), item)
+                found.setdefault(_file_key(item), item)
         elif is_video(path):
-            found.setdefault(str(path.resolve()).lower(), path.resolve())
-    return sorted(found.values(), key=lambda p: str(p).lower())
+            found.setdefault(_file_key(path), path.resolve())
+    return sorted(found.values(), key=lambda p: (str(p).lower(), str(p)))
