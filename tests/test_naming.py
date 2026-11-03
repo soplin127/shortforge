@@ -32,6 +32,12 @@ def test_unknown_token_is_left_visible():
     ('a<b>c:d"e|f?g*h', "a_b_c_d_e_f_g_h"),
     ("CON", "_CON"),
     ("trailing.", "trailing"),
+    ("trailing .", "trailing"),
+    ("nul.backup", "_nul.backup"),
+    ("Aux .mp4", "_Aux .mp4"),
+    ("lpt9.a.b", "_lpt9.a.b"),
+    ("console", "console"),
+    ("...", "_"),
     ("{stem}", "x_y"),
 ])
 def test_names_are_safe_on_windows(template, expected):
@@ -40,6 +46,15 @@ def test_names_are_safe_on_windows(template, expected):
 
 def test_long_names_are_truncated():
     assert len(_render("a" * 300)) == 120
+
+
+@pytest.mark.parametrize("tail", [". b", "  b", " . b"])
+def test_truncation_does_not_leave_trailing_dot_or_space(tail):
+    assert _render("a" * 119 + tail) == "a" * 119
+
+
+def test_truncation_of_only_dots_falls_back_to_placeholder():
+    assert _render("." * 130 + "a") == "_"
 
 
 def test_pick_output_path_avoids_disk_and_reserved_names(tmp_path):
