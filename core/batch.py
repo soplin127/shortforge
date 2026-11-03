@@ -21,13 +21,19 @@ from core.ffmpeg import (
     FFmpegTools,
     capabilities,
     probe,
+    probe_raw,
     run_ffmpeg,
 )
 from core.naming import pick_output_path, render_name
 from core.pipeline import JobContext, JobPlan, plan_job
 from core.report import CsvReport, ReportRow, params_to_json
 from core.state import StateStore
-from features.metadata import roll_metadata, verify_output
+from features.metadata import (
+    has_encoder_tag,
+    retag_command,
+    roll_metadata,
+    verify_output,
+)
 
 LOG_FILE = "uniq.log"
 MIN_PROGRESS_FOR_ETA = 0.02
@@ -240,6 +246,7 @@ class BatchRunner:
         work_dir = Path(tempfile.mkdtemp(prefix="uniq_"))
         try:
             plan, encoder = self._encode(job, info, caps, metadata, part, work_dir)
+            self._strip_encoder_tag(job, part, metadata, plan, work_dir)
             if self.preset.metadata.verify:
                 problems = verify_output(self.tools, str(part), metadata, info.tags)
                 if problems:
@@ -288,6 +295,29 @@ class BatchRunner:
                 with self._lock:
                     self._processes.pop(job.index, None)
         raise last_error  # type: ignore[misc]
+
+    def _strip_encoder_tag(self, job: Job, part: Path, metadata, plan: JobPlan, work_dir: Path) -> None:
+        """Remux in place when the encoder left its per-stream tag (FFmpeg < 7.0)."""
+        if not has_encoder_tag(probe_raw(self.tools, part)):
+            return
+        retagged = part.with_name(f".{part.stem}.retag.mp4")
+        try:
+            run_ffmpeg(
+                retag_command(self.tools.ffmpeg, str(part), str(retagged), metadata),
+                cwd=str(work_dir),
+                stderr_path=work_dir / "retag.log",
+                expected_duration=plan.expected_duration,
+                on_start=lambda proc: self._register(job, proc),
+            )
+            os.replace(retagged, part)
+        except FFmpegError as exc:
+            if self._stop.is_set():
+                raise JobStopped from exc
+            raise
+        finally:
+            retagged.unlink(missing_ok=True)
+            with self._lock:
+                self._processes.pop(job.index, None)
 
     # ---------------------------------------------------------------- helpers
 
