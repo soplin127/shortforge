@@ -86,12 +86,35 @@ def metadata_args(p: MetadataParams) -> list[str]:
         "-metadata", f"creation_time={p.creation_time}",
         "-metadata", f"title={p.title}",
         "-metadata", f"comment={p.comment}",
-        "-metadata:s:v:0", "encoder=",  # no "Lavc ... libx264" per-stream tag
+        "-metadata:s:v:0", "encoder=",  # no "Lavc ... libx264" tag (FFmpeg < 7: retag_command)
         "-metadata:s:a:0", "encoder=",
         "-metadata:s:v:0", f"handler_name={VIDEO_HANDLER}",
         "-metadata:s:a:0", f"handler_name={AUDIO_HANDLER}",
         "-metadata:s:v:0", "language=und",
         "-metadata:s:a:0", "language=und",
+    ]
+
+
+def has_encoder_tag(probe_data: dict) -> bool:
+    """True when any stream still carries a per-stream "encoder" tag."""
+    return any("encoder" in (s.get("tags") or {}) for s in probe_data.get("streams") or [])
+
+
+def retag_command(ffmpeg: str, src: str, dst: str, p: MetadataParams) -> list[str]:
+    """Stream-copy remux that rewrites the tags without re-encoding.
+
+    FFmpeg before 7.0 stores "Lavc <codec>" in the video sample entry of every
+    encoded track and ignores "-metadata:s:v:0 encoder=". A copy remux does not
+    run the encoder, so the same metadata_args() leave the track clean.
+    """
+    return [
+        ffmpeg, "-hide_banner", "-nostdin", "-y", "-loglevel", "error",
+        "-progress", "pipe:1", "-nostats",
+        "-i", src,
+        "-map", "0", "-c", "copy",
+        *metadata_args(p),
+        "-movflags", "+faststart",
+        "-f", "mp4", dst,
     ]
 
 
