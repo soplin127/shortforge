@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
+import tempfile
 import types
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from datetime import date
@@ -392,5 +394,16 @@ def load_preset(path: str | Path) -> Preset:
 
 
 def save_preset(preset: Preset, path: str | Path) -> None:
-    text = json.dumps(preset_to_dict(preset), ensure_ascii=False, indent=2)
-    Path(path).write_text(text + "\n", encoding="utf-8")
+    """Write atomically: an interrupted save never leaves a truncated preset behind."""
+    target = Path(path)
+    text = json.dumps(preset_to_dict(preset), ensure_ascii=False, indent=2) + "\n"
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=target.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp_name, target)
+    except BaseException:
+        Path(tmp_name).unlink(missing_ok=True)
+        raise
