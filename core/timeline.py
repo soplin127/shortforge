@@ -6,10 +6,12 @@ source time and converted to output time through :class:`TimelineMap`.
 """
 from __future__ import annotations
 
+import math
 import random
 from dataclasses import dataclass
 
 MIN_SEGMENT = 0.05  # seconds; shorter source pieces are merged away
+MAX_CLOCK_PARTS = 3  # HH:MM:SS
 
 
 class TimeSpecError(ValueError):
@@ -22,15 +24,29 @@ def _parse_point(text: str, duration: float) -> float:
         raise TimeSpecError("Пустое значение времени")
     try:
         if text.endswith("%"):
-            return float(text[:-1]) / 100.0 * duration
-        if ":" in text:
-            seconds = 0.0
-            for part in text.split(":"):
-                seconds = seconds * 60 + float(part)
-            return seconds
-        return float(text)
+            value = float(text[:-1]) / 100.0 * duration
+        elif ":" in text:
+            value = _parse_clock(text)
+        else:
+            value = float(text)
     except ValueError as exc:
         raise TimeSpecError(f"Не понимаю время '{text}'") from exc
+    if not math.isfinite(value):
+        raise TimeSpecError(f"Время должно быть конечным числом: '{text}'")
+    return value
+
+
+def _parse_clock(text: str) -> float:
+    """'MM:SS' or 'HH:MM:SS' (fractional seconds allowed); never negative."""
+    parts = text.split(":")
+    if len(parts) > MAX_CLOCK_PARTS:
+        raise TimeSpecError(f"Слишком много частей во времени '{text}', максимум ЧЧ:ММ:СС")
+    if text.startswith(("-", "+")):
+        raise TimeSpecError(f"Время в формате ЧЧ:ММ:СС не может быть со знаком: '{text}'")
+    seconds = 0.0
+    for part in parts:
+        seconds = seconds * 60 + float(part)
+    return seconds
 
 
 def parse_time_spec(spec: str, duration: float, rng: random.Random) -> float:

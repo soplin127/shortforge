@@ -71,3 +71,13 @@ def test_insertion_order_keeps_ad_index():
 def test_too_short_window_raises():
     with pytest.raises(TimeSpecError):
         build_timeline(5.0, 5.01, [], speed=1.0)
+
+
+@pytest.mark.parametrize("spec", ["nan", "inf", "-inf", "nan%", "random:nan-5", "-0:30", "+1:00", "1:2:3:4"])
+def test_parse_time_spec_rejects_invalid_values(spec):
+    with pytest.raises(TimeSpecError):
+        parse_time_spec(spec, 60.0, random.Random(1))
+
+
+def test_negative_seconds_still_clamp_to_zero():
+    assert parse_time_spec("-5", 60.0, random.Random(1)) == 0.0
