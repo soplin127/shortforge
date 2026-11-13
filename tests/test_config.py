@@ -147,3 +147,30 @@ def test_metadata_date_range_must_not_be_reversed():
 ])
 def test_metadata_dates_accept_empty_and_ordered_values(dates):
     assert preset_from_dict({"metadata": dates}).metadata.date_from == dates.get("date_from", "")
+
+
+def test_save_preset_keeps_original_when_replace_fails(tmp_path, monkeypatch):
+    path = tmp_path / "p.json"
+    save_preset(Preset(), path)
+    original = path.read_text(encoding="utf-8")
+
+    def fail(*_args, **_kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr("core.config.os.replace", fail)
+    with pytest.raises(OSError, match="disk full"):
+        save_preset(replace(Preset(), encoder=EncoderSettings(hwaccel="none")), path)
+
+    assert path.read_text(encoding="utf-8") == original
+    assert [p.name for p in tmp_path.iterdir()] == ["p.json"]
+
+
+def test_save_preset_overwrites_existing_file_without_leftovers(tmp_path):
+    path = tmp_path / "p.json"
+    path.write_text("{ truncated", encoding="utf-8")
+    preset = replace(Preset(), encoder=EncoderSettings(hwaccel="none"))
+
+    save_preset(preset, path)
+
+    assert load_preset(path) == preset
+    assert [p.name for p in tmp_path.iterdir()] == ["p.json"]
