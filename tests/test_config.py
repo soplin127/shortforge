@@ -66,3 +66,23 @@ def test_shipped_default_preset_matches_code_defaults():
     preset = load_preset(Path(__file__).parent.parent / "presets" / "default.json")
 
     assert preset_to_dict(preset) == preset_to_dict(Preset())
+
+
+@pytest.mark.parametrize("text", [
+    '{"uniq": {"speed": [NaN, 1.0]}}',
+    '{"encoder": {"crf": [18, Infinity]}}',
+    '{"output": {"variants": Infinity}}',
+    '{"music": {"volume_db": -Infinity}}',
+    '{"uniq": {"flip_probability": NaN}}',
+])
+def test_preset_rejects_non_finite_numbers(tmp_path, text):
+    path = tmp_path / "p.json"
+    path.write_text(text, encoding="utf-8")
+
+    with pytest.raises(ConfigError, match="finite"):
+        load_preset(path)
+
+
+def test_range_rejects_nan_when_built_directly():
+    with pytest.raises(ConfigError, match="finite"):
+        Range(float("nan"), 1.0)
