@@ -1,3 +1,4 @@
+import re
 from dataclasses import replace
 from pathlib import Path
 
@@ -86,3 +87,14 @@ def test_preset_rejects_non_finite_numbers(tmp_path, text):
 def test_range_rejects_nan_when_built_directly():
     with pytest.raises(ConfigError, match="finite"):
         Range(float("nan"), 1.0)
+
+
+@pytest.mark.parametrize("value, where", [
+    (["fast", 1.0], "preset.uniq.speed[0]"),
+    ([0.9, None], "preset.uniq.speed[1]"),
+    ([True, 1.0], "preset.uniq.speed[0]"),
+    ({"min": 0.9, "max": "1.1"}, "preset.uniq.speed.max"),
+])
+def test_range_bounds_must_be_numbers(value, where):
+    with pytest.raises(ConfigError, match=re.escape(f"{where}: expected a number")):
+        preset_from_dict({"uniq": {"speed": value}})
