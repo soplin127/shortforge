@@ -6,6 +6,7 @@ Every settings block is a frozen dataclass; changes are made with
 from __future__ import annotations
 
 import json
+import math
 import re
 import types
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
@@ -23,6 +24,8 @@ class Range:
     max: float
 
     def __post_init__(self) -> None:
+        if not (math.isfinite(self.min) and math.isfinite(self.max)):
+            raise ConfigError(f"Range bounds must be finite numbers, got [{self.min}, {self.max}]")
         if self.min > self.max:
             raise ConfigError(f"Range min {self.min} is greater than max {self.max}")
 
@@ -309,6 +312,8 @@ def _coerce(tp: Any, value: Any, where: str) -> Any:
     if tp in (int, float):
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise ConfigError(f"{where}: expected a number")
+        if not math.isfinite(value):
+            raise ConfigError(f"{where}: expected a finite number, got {value}")
         if tp is int and float(value) != int(value):
             raise ConfigError(f"{where}: expected an integer")
         return tp(value)
