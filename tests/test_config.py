@@ -122,3 +122,28 @@ def test_banner_colours_accept_hex_names_and_alpha(value):
     slot = preset_from_dict(_banner(box_color=value)).ads.slots[0]
 
     assert slot.box_color == value
+
+
+@pytest.mark.parametrize("field, value", [
+    ("date_from", "2025-13-01"),
+    ("date_from", "yesterday"),
+    ("date_to", "2025-02-30"),
+])
+def test_metadata_dates_must_be_iso(field, value):
+    with pytest.raises(ConfigError, match=f"metadata.{field}"):
+        preset_from_dict({"metadata": {field: value}})
+
+
+def test_metadata_date_range_must_not_be_reversed():
+    with pytest.raises(ConfigError, match="after"):
+        preset_from_dict({"metadata": {"date_from": "2025-06-01", "date_to": "2025-01-01"}})
+
+
+@pytest.mark.parametrize("dates", [
+    {},
+    {"date_from": "2025-01-01"},
+    {"date_to": "2025-01-01"},
+    {"date_from": " 2025-01-01 ", "date_to": "2025-01-01"},
+])
+def test_metadata_dates_accept_empty_and_ordered_values(dates):
+    assert preset_from_dict({"metadata": dates}).metadata.date_from == dates.get("date_from", "")
