@@ -10,6 +10,7 @@ import math
 import re
 import types
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
+from datetime import date
 from pathlib import Path
 from typing import Any, Union, get_args, get_origin, get_type_hints
 
@@ -133,6 +134,20 @@ class MetadataSettings:
 
     def __post_init__(self) -> None:
         _check_choice("metadata.title_mode", self.title_mode, ("empty", "neutral"))
+        start = _parse_iso_date("metadata.date_from", self.date_from)
+        end = _parse_iso_date("metadata.date_to", self.date_to)
+        if start and end and start > end:
+            raise ConfigError(f"metadata.date_from {start} is after metadata.date_to {end}")
+
+
+def _parse_iso_date(name: str, text: str) -> date | None:
+    """Empty means "use the default"; anything else must be YYYY-MM-DD."""
+    if not text.strip():
+        return None
+    try:
+        return date.fromisoformat(text.strip())
+    except ValueError as exc:
+        raise ConfigError(f"{name} must be YYYY-MM-DD, got {text!r}") from exc
 
 
 @dataclass(frozen=True)
