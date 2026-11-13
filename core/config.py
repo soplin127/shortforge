@@ -30,6 +30,16 @@ class Range:
             raise ConfigError(f"Range min {self.min} is greater than max {self.max}")
 
 
+HEX_COLOR = re.compile(r"#[0-9A-Fa-f]{6}")
+# drawtext colours: "#RRGGBB" or an ffmpeg colour name, optional "@alpha" in [0, 1].
+BANNER_COLOR = re.compile(r"(?:#[0-9A-Fa-f]{6}|[A-Za-z]+)(?:@(?:0(?:\.\d+)?|1(?:\.0+)?|\.\d+))?")
+
+
+def _check_color(name: str, value: str, pattern: re.Pattern[str], expected: str) -> None:
+    if not pattern.fullmatch(value.strip()):
+        raise ConfigError(f"{name} must be {expected}, got {value!r}")
+
+
 def _check_choice(name: str, value: str, allowed: tuple[str, ...]) -> None:
     if value not in allowed:
         raise ConfigError(f"{name} must be one of {allowed}, got {value!r}")
@@ -182,6 +192,8 @@ class SubtitleSettings:
             raise ConfigError("subtitles.max_words must be within [1, 10]")
         if self.font_size < 8:
             raise ConfigError("subtitles.font_size is too small")
+        for name in ("primary_color", "highlight_color", "outline_color"):
+            _check_color(f"subtitles.{name}", getattr(self, name), HEX_COLOR, "#RRGGBB")
 
 
 AD_POSITIONS = (
@@ -195,7 +207,6 @@ AD_BACKDROPS = ("freeze", "blur", "black")
 # Green/blue screen removal for video overlays: detect the background colour, use
 # ``chroma_key``, or keep the video as it is.
 CHROMA_MODES = ("auto", "color", "off")
-HEX_COLOR = re.compile(r"#[0-9A-Fa-f]{6}")
 
 
 @dataclass(frozen=True)
@@ -230,6 +241,9 @@ class AdSlot:
             raise ConfigError("ad.duration must be positive")
         if self.fade < 0:
             raise ConfigError("ad.fade must be non-negative")
+        for name in ("text_color", "box_color"):
+            _check_color(f"ad.{name}", getattr(self, name), BANNER_COLOR,
+                         "#RRGGBB or a colour name, optionally with @alpha in [0, 1]")
         if not self.path and not (self.mode == "overlay" and self.text):
             raise ConfigError("ad slot needs a path (or text for an overlay banner)")
 

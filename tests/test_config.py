@@ -98,3 +98,27 @@ def test_range_rejects_nan_when_built_directly():
 def test_range_bounds_must_be_numbers(value, where):
     with pytest.raises(ConfigError, match=re.escape(f"{where}: expected a number")):
         preset_from_dict({"uniq": {"speed": value}})
+
+
+@pytest.mark.parametrize("field", ["primary_color", "highlight_color", "outline_color"])
+@pytest.mark.parametrize("value", ["white", "#FFF", "FFFFFF", "#GGGGGG", "#FFFFFF@0.5"])
+def test_subtitle_colours_must_be_hex(field, value):
+    with pytest.raises(ConfigError, match=f"subtitles.{field}"):
+        preset_from_dict({"subtitles": {field: value}})
+
+
+def _banner(**overrides):
+    return {"ads": {"slots": [{"mode": "overlay", "text": "hi", **overrides}]}}
+
+
+@pytest.mark.parametrize("value", ["#FFF", "#FFFFFF@2", "#FFFFFF@", "0xFFFFFF", "red;x", ""])
+def test_banner_colours_reject_values_ffmpeg_cannot_parse(value):
+    with pytest.raises(ConfigError, match="ad.text_color"):
+        preset_from_dict(_banner(text_color=value))
+
+
+@pytest.mark.parametrize("value", ["#000000@0.6", "#ffcc00", "white", "black@0.5", "#FFFFFF@1", "#000000@.25"])
+def test_banner_colours_accept_hex_names_and_alpha(value):
+    slot = preset_from_dict(_banner(box_color=value)).ads.slots[0]
+
+    assert slot.box_color == value
