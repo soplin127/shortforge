@@ -289,10 +289,14 @@ def _coerce(tp: Any, value: Any, where: str) -> Any:
     origin = get_origin(tp)
     if tp is Range:
         if isinstance(value, (list, tuple)) and len(value) == 2:
-            return Range(float(value[0]), float(value[1]))
-        if isinstance(value, dict) and {"min", "max"} <= set(value):
-            return Range(float(value["min"]), float(value["max"]))
-        raise ConfigError(f"{where}: expected [min, max]")
+            low, high = value
+            low_where, high_where = f"{where}[0]", f"{where}[1]"
+        elif isinstance(value, dict) and {"min", "max"} <= set(value):
+            low, high = value["min"], value["max"]
+            low_where, high_where = f"{where}.min", f"{where}.max"
+        else:
+            raise ConfigError(f"{where}: expected [min, max]")
+        return Range(_coerce(float, low, low_where), _coerce(float, high, high_where))
     if is_dataclass(tp):
         if not isinstance(value, dict):
             raise ConfigError(f"{where}: expected an object")
