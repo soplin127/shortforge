@@ -1,6 +1,7 @@
 """Subtitles: SRT/ASS parsing, mapping to output time, Shorts-style chunking, ASS rendering."""
 from __future__ import annotations
 
+import codecs
 import re
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -60,6 +61,11 @@ def find_sidecar(source: Path) -> Path | None:
 
 def read_text(path: Path) -> str:
     data = path.read_bytes()
+    if data.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
+        try:
+            return data.decode("utf-16")
+        except UnicodeDecodeError as exc:
+            raise SubtitleError(f"Повреждённый файл UTF-16: {path}") from exc
     for encoding in TEXT_ENCODINGS:
         try:
             return data.decode(encoding)
