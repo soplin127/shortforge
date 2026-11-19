@@ -17,6 +17,7 @@ MAX_GAP_FILL = 0.5  # keep a chunk on screen across pauses shorter than this
 MIN_EVENT_SECONDS = 0.25
 MIN_WORD_SECONDS = 0.05
 SENTENCE_END = (".", "!", "?", "…")
+SIMULTANEOUS_EPS = 1e-3  # seconds; events this close start "together"
 
 _SRT_TIME = re.compile(
     r"(\d+):(\d{1,2}):(\d{1,2})[,.](\d{1,3})\s*-->\s*(\d+):(\d{1,2}):(\d{1,2})[,.](\d{1,3})"
@@ -201,7 +202,19 @@ def build_events(cues: list[Cue], timeline: TimelineMap, settings: SubtitleSetti
             inside = tuple(w for w in words if start - 1e-6 <= w.start < end)
             if inside:
                 events.append(Cue(start, end, inside))
-    return _settle_timing(sorted(events, key=lambda e: e.start))
+    return _settle_timing(_merge_simultaneous(sorted(events, key=lambda e: e.start)))
+
+
+def _merge_simultaneous(events: list[Cue]) -> list[Cue]:
+    """Events starting together are shown as one, so neither is clipped to nothing."""
+    merged: list[Cue] = []
+    for event in events:
+        if merged and abs(event.start - merged[-1].start) <= SIMULTANEOUS_EPS:
+            last = merged[-1]
+            merged[-1] = Cue(last.start, max(last.end, event.end), last.words + event.words)
+        else:
+            merged.append(event)
+    return merged
 
 
 def _settle_timing(events: list[Cue]) -> list[Cue]:
