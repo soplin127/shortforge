@@ -209,6 +209,10 @@ class SubtitleSettings:
             raise ConfigError("subtitles.max_words must be within [1, 10]")
         if self.font_size < 8:
             raise ConfigError("subtitles.font_size is too small")
+        if not self.font.strip():
+            raise ConfigError("subtitles.font must not be empty")
+        if "," in self.font:
+            raise ConfigError(f"subtitles.font must not contain commas (ASS style field), got {self.font!r}")
         for name in ("primary_color", "highlight_color", "outline_color"):
             _check_color(f"subtitles.{name}", getattr(self, name), HEX_COLOR, "#RRGGBB")
 
