@@ -30,6 +30,16 @@ class ReportRow:
     params_json: str = ""
 
 
+def free_report_path(out_dir: Path, stamp: str) -> Path:
+    """``report_<stamp>.csv``, or ``report_<stamp>_2.csv`` etc. when a run in the same second left one."""
+    path = out_dir / f"report_{stamp}.csv"
+    suffix = 2
+    while path.exists():
+        path = out_dir / f"report_{stamp}_{suffix}.csv"
+        suffix += 1
+    return path
+
+
 def params_to_json(params) -> str:
     return json.dumps(asdict(params), ensure_ascii=False, sort_keys=True)
 
@@ -39,7 +49,7 @@ class CsvReport:
         self.path = path
         self._lock = threading.Lock()
         # BOM (utf-8-sig) on creation so Excel on Windows opens Cyrillic file names correctly
-        with open(path, "w", newline="", encoding="utf-8-sig") as fh:
+        with open(path, "x", newline="", encoding="utf-8-sig") as fh:  # never truncate a report
             csv.writer(fh).writerow(COLUMNS)
 
     def add(self, row: ReportRow) -> None:

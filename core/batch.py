@@ -26,7 +26,7 @@ from core.ffmpeg import (
 )
 from core.naming import pick_output_path, render_name
 from core.pipeline import JobContext, JobPlan, plan_job
-from core.report import CsvReport, ReportRow, params_to_json
+from core.report import CsvReport, ReportRow, free_report_path, params_to_json
 from core.state import StateStore
 from features.metadata import (
     has_encoder_tag,
@@ -191,7 +191,7 @@ class BatchRunner:
         if warning:
             self._log(warning)
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.report = CsvReport(self.out_dir / f"report_{stamp}.csv")
+        self.report = CsvReport(free_report_path(self.out_dir, stamp))
         state = StateStore(self.out_dir)
         workers = 1 if self.preview else (self.preset.batch.workers or default_workers())
         self._log(f"Старт: {len(self.jobs)} задач, потоков: {workers}, энкодер: {self.encoder}")
