@@ -20,7 +20,7 @@ class StateStore:
     def _load(self) -> dict[str, str]:
         try:
             data = json.loads(self._path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        except (OSError, ValueError):  # JSONDecodeError and UnicodeDecodeError alike
             return {}
         done = data.get("done") if isinstance(data, dict) else None
         return {str(k): str(v) for k, v in done.items()} if isinstance(done, dict) else {}
