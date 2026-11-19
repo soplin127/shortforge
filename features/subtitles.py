@@ -99,7 +99,8 @@ def parse_srt(text: str) -> list[Cue]:
                 g = [int(x) for x in match.groups()]
                 start = g[0] * 3600 + g[1] * 60 + g[2] + g[3] / 10 ** len(match.group(4))
                 end = g[4] * 3600 + g[5] * 60 + g[6] + g[7] / 10 ** len(match.group(8))
-                cue = _make_cue(start, end, _HTML_TAG.sub("", " ".join(lines[i + 1:])))
+                body = _ASS_OVERRIDE.sub("", _HTML_TAG.sub("", " ".join(lines[i + 1:])))
+                cue = _make_cue(start, end, body)
                 if cue:
                     cues.append(cue)
                 break
