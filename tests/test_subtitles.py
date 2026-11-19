@@ -162,3 +162,13 @@ def test_missing_faster_whisper_gives_install_hint(monkeypatch):
 
     with pytest.raises(Exception, match="pip install faster-whisper"):
         transcribe_mod._load_model("small")
+
+
+def test_srt_strips_ass_override_blocks():
+    cues = parse_srt("1\n00:00:01,000 --> 00:00:02,000\n{\\an8}Hello {\\i1}world{\\i0}\n")
+    assert cues[0].text == "Hello world"
+
+
+def test_srt_keeps_text_without_override_blocks():
+    cues = parse_srt("1\n00:00:01,000 --> 00:00:02,000\n<i>Plain</i> line\n")
+    assert cues[0].text == "Plain line"
