@@ -115,7 +115,8 @@ def format_eta(eta: float | None) -> str:
 def job_rng(seed: str, job: Job) -> random.Random:
     if not seed:
         return random.Random()
-    return random.Random(f"{seed}:{job.source.name}:{job.variant}")
+    # the whole path: same-named files in different folders must not share parameters
+    return random.Random(f"{seed}:{job.source.as_posix()}:{job.variant}")
 
 
 class BatchRunner:
