@@ -114,13 +114,30 @@ def parse_srt(text: str) -> list[Cue]:
 
 
 def _ass_time(value: str) -> float:
-    h, m, s = value.strip().split(":")
+    parts = value.strip().split(":")
+    if len(parts) != 3:
+        raise ValueError(f"время должно быть Ч:ММ:СС.сс, получено '{value.strip()}'")
+    h, m, s = parts
     return int(h) * 3600 + int(m) * 60 + float(s)
+
+
+def _ass_dialogue(fields: list[str], value: str, line_no: int) -> Cue | None:
+    row = dict(zip(fields, value.split(",", len(fields) - 1)))
+    missing = [name for name in ("start", "end") if name not in row]
+    if missing:
+        raise SubtitleError(f"ASS, строка {line_no}: нет полей {', '.join(missing)}")
+    try:
+        start, end = _ass_time(row["start"]), _ass_time(row["end"])
+    except ValueError as exc:
+        raise SubtitleError(f"ASS, строка {line_no}: {exc}") from exc
+    body = _ASS_OVERRIDE.sub("", row.get("text", ""))
+    body = re.sub(r"\\[Nnh]", " ", body)
+    return _make_cue(start, end, body)
 
 
 def parse_ass(text: str) -> list[Cue]:
     cues, fields, in_events = [], None, False
-    for raw in text.splitlines():
+    for line_no, raw in enumerate(text.splitlines(), 1):
         line = raw.strip()
         if line.startswith("["):
             in_events = line.lower() == "[events]"
@@ -131,11 +148,7 @@ def parse_ass(text: str) -> list[Cue]:
         if key == "Format":
             fields = [f.strip().lower() for f in value.split(",")]
         elif key == "Dialogue" and fields:
-            parts = value.split(",", len(fields) - 1)
-            row = dict(zip(fields, parts))
-            body = _ASS_OVERRIDE.sub("", row.get("text", ""))
-            body = re.sub(r"\\[Nnh]", " ", body)
-            cue = _make_cue(_ass_time(row["start"]), _ass_time(row["end"]), body)
+            cue = _ass_dialogue(fields, value, line_no)
             if cue:
                 cues.append(cue)
     return sorted(cues, key=lambda c: c.start)
